@@ -10,8 +10,44 @@ from datetime import datetime
 import sys
 import os
 import base64
+import subprocess
 from pathlib import Path
 import json
+
+# ===== 云端部署：安装playwright浏览器 =====
+def setup_playwright():
+    """确保playwright浏览器已安装"""
+    try:
+        print("📦 正在检查playwright浏览器...")
+        
+        # 设置 Playwright 浏览器安装路径
+        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
+        
+        # 安装 Chromium
+        result = subprocess.run(
+            ["playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        if result.returncode == 0:
+            print("✅ playwright浏览器安装成功")
+            if result.stdout:
+                print(result.stdout)
+        else:
+            print("⚠️ 安装失败，尝试安装所有浏览器...")
+            subprocess.run(["playwright", "install"], check=True, timeout=300)
+            
+    except subprocess.TimeoutExpired:
+        print("⏱️ 安装超时，但可能已部分完成")
+    except Exception as e:
+        print(f"⚠️ playwright安装警告: {e}")
+
+# 在Linux环境下执行（Streamlit Cloud）
+if sys.platform.startswith('linux'):
+    setup_playwright()
+# ======================================
 
 # Windows平台修复
 if sys.platform == "win32":
@@ -25,7 +61,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 自定义CSS - 添加旋转动画
+# 自定义CSS
 st.markdown("""
 <style>
     /* 旋转加载动画 */
@@ -113,15 +149,14 @@ with st.sidebar:
     
     # 登录状态提示
     cookies_dir = Path("cookies")
-    if (cookies_dir / "cookies.json").exists():
+    browser_data_dir = Path("cookies/browser_data")
+    if browser_data_dir.exists() and any(browser_data_dir.iterdir()):
         st.success("✅ 已保存登录状态")
     else:
         st.warning("⚠️ 首次运行需要登录")
     
     st.markdown("---")
-    # ===== 修改底部文字 =====
     st.caption("正在提取时需要时间，宝宝请耐心等待哦！")
-    # =======================
 
 # 主界面
 st.markdown("### 📝 输入问题")
@@ -136,23 +171,20 @@ questions_text = st.text_area(
 
 questions = [q.strip() for q in questions_text.split('\n') if q.strip()]
 
-# ===== 按钮状态控制：一进来就是激活状态，运行时禁用 =====
 # 控制按钮
 col1, col2, col3 = st.columns([1, 1, 5])
 with col1:
-    # 按钮默认激活，只有在 processing 为 True 时才禁用
     start_button = st.button(
         "🚀 开始提取",
         type="primary",
         use_container_width=True,
-        disabled=st.session_state.processing  # 只在 processing 为 True 时禁用
+        disabled=st.session_state.processing or not questions
     )
 
 with col2:
     if st.button("🔄 重置", use_container_width=True, disabled=st.session_state.processing):
         st.session_state.results = []
         st.rerun()
-# ======================================================
 
 # 进度显示
 progress_placeholder = st.empty()
@@ -165,14 +197,12 @@ async def run_analysis(questions, show_browser, delay):
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
     try:
-        # ===== 带旋转图标的启动状态 =====
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🚀 正在启动浏览器...</span></div>',
             unsafe_allow_html=True
         )
         await analyzer.start()
         
-        # ===== 带旋转图标的登录状态 =====
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🔐 正在检查登录状态...</span></div>',
             unsafe_allow_html=True
@@ -185,7 +215,6 @@ async def run_analysis(questions, show_browser, delay):
             progress = (i + 1) / len(questions)
             progress_placeholder.progress(progress)
             
-            # ===== 带旋转图标的处理状态 =====
             status_placeholder.markdown(
                 f'<div><span class="loading-spinner"></span><span class="status-text">⏳ 正在处理 [{i+1}/{len(questions)}]: {question[:50]}...</span></div>',
                 unsafe_allow_html=True
@@ -197,7 +226,6 @@ async def run_analysis(questions, show_browser, delay):
             if i < len(questions) - 1:
                 await asyncio.sleep(delay)
         
-        # 完成状态（不带旋转图标）
         status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
         
     except Exception as e:
@@ -237,9 +265,6 @@ if st.session_state.results:
             st.markdown(f"**📚 引用来源 ({len(citations)} 条)**")
             
             # 创建DataFrame
-            df = pd.DataFrame(citations)
-            
-            # 重新排列列
             display_df = pd.DataFrame()
             display_df["序号"] = [c.get("cite_index", i+1) for i, c in enumerate(citations)]
             display_df["网站"] = [c.get("site", "") for c in citations]
@@ -257,7 +282,7 @@ if st.session_state.results:
                 }
             )
             
-            # 添加到扁平化数据（用于下载）
+            # 添加到扁平化数据
             for c in citations:
                 all_citations_data.append({
                     "问题": result['question'],
@@ -276,11 +301,8 @@ if st.session_state.results:
         st.markdown("### 📥 导出引用数据")
         
         df_download = pd.DataFrame(all_citations_data)
-        
-        # 显示统计信息
         st.info(f"📊 共 {len(df_download)} 条引用记录")
         
-        # 预览前几条
         with st.expander("预览导出数据"):
             st.dataframe(df_download.head(10), use_container_width=True)
         
@@ -296,6 +318,4 @@ if st.session_state.results:
 
 # 底部说明
 st.markdown("---")
-# ===== 修改底部文字 =====
 st.caption("正在提取时需要时间，宝宝请耐心等待哦！")
-# ========================
