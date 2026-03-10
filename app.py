@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-稳定版本 - 使用简单的状态显示
+只显示引用来源表格和分享链接
 """
 
 import streamlit as st
@@ -18,33 +18,33 @@ import json
 def setup_playwright():
     """确保playwright浏览器已安装"""
     try:
-        # 直接输出到终端，不经过Streamlit
         print("📦 正在检查playwright浏览器...")
         
         # 设置 Playwright 浏览器安装路径
-        cache_dir = Path.home() / ".cache" / "ms-playwright"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(cache_dir)
-        
-        # 检查浏览器是否已存在
-        browser_path = cache_dir / "chromium-1091" / "chrome-linux" / "chrome"
-        if browser_path.exists():
-            print("✅ 浏览器已存在")
-            return
+        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
         
         # 安装 Chromium
-        print("📥 正在安装 Chromium 浏览器...")
-        subprocess.run(
+        result = subprocess.run(
             ["playwright", "install", "chromium"],
-            check=True,
-            timeout=300
+            capture_output=True,
+            text=True,
+            timeout=120
         )
-        print("✅ playwright浏览器安装成功")
         
+        if result.returncode == 0:
+            print("✅ playwright浏览器安装成功")
+            if result.stdout:
+                print(result.stdout)
+        else:
+            print("⚠️ 安装失败，尝试安装所有浏览器...")
+            subprocess.run(["playwright", "install"], check=True, timeout=300)
+            
+    except subprocess.TimeoutExpired:
+        print("⏱️ 安装超时，但可能已部分完成")
     except Exception as e:
         print(f"⚠️ playwright安装警告: {e}")
 
-# 在Linux环境下执行
+# 在Linux环境下执行（Streamlit Cloud）
 if sys.platform.startswith('linux'):
     setup_playwright()
 # ======================================
@@ -60,12 +60,6 @@ st.set_page_config(
     page_icon="🔗",
     layout="wide"
 )
-
-# 初始化session state
-if 'results' not in st.session_state:
-    st.session_state.results = []
-if 'processing' not in st.session_state:
-    st.session_state.processing = False
 
 # 自定义CSS
 st.markdown("""
@@ -115,9 +109,15 @@ st.markdown("""
 
 st.title("🔗 DeepSeek 引用提取器")
 
+# 初始化session state
+if 'results' not in st.session_state:
+    st.session_state.results = []
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+
 # 侧边栏配置
 with st.sidebar:
-    # 左侧图标
+    # ===== 左侧图标 =====
     icon_path = "blsicon.png"
     if os.path.exists(icon_path):
         with open(icon_path, "rb") as f:
@@ -126,6 +126,7 @@ with st.sidebar:
         st.markdown(html_code, unsafe_allow_html=True)
     else:
         st.markdown("### 🔗")
+    # ==================
     
     st.markdown("---")
     
@@ -240,62 +241,63 @@ if start_button and questions and not st.session_state.processing:
 # 显示结果
 if st.session_state.results:
     st.markdown("---")
-    st.markdown("### 📊 提取结果")
     
     # 准备所有引用的扁平化数据
     all_citations_data = []
     
     for idx, result in enumerate(st.session_state.results):
-        with st.expander(f"📌 问题 {idx+1}: {result['question']}", expanded=True):
-            # 显示分享链接
-            share_link = result.get("share_link", "")
-            if share_link:
-                st.markdown(f"""
-                <div class="share-link">
-                    🔗 <strong>分享链接：</strong><a href="{share_link}" target="_blank">{share_link}</a>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.warning("⚠️ 未生成分享链接")
+        st.markdown(f"### 📌 问题 {idx+1}: {result['question']}")
+        
+        # 显示分享链接
+        share_link = result.get("share_link", "")
+        if share_link:
+            st.markdown(f"""
+            <div class="share-link">
+                🔗 <strong>分享链接：</strong><a href="{share_link}" target="_blank">{share_link}</a>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ 未生成分享链接")
+        
+        # 显示引用来源表格
+        citations = result.get("citations", [])
+        if citations:
+            st.markdown(f"**📚 引用来源 ({len(citations)} 条)**")
             
-            # 显示引用来源表格
-            citations = result.get("citations", [])
-            if citations:
-                st.markdown(f"**📚 引用来源 ({len(citations)} 条)**")
-                
-                # 创建DataFrame
-                display_df = pd.DataFrame()
-                display_df["序号"] = [c.get("cite_index", i+1) for i, c in enumerate(citations)]
-                display_df["网站"] = [c.get("site", "") for c in citations]
-                display_df["标题"] = [c.get("title", "") for c in citations]
-                display_df["URL"] = [c.get("url", "") for c in citations]
-                display_df["摘要"] = [c.get("snippet", "")[:100] + "..." if c.get("snippet") else "" for c in citations]
-                
-                # 显示表格
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "URL": st.column_config.LinkColumn("URL")
-                    }
-                )
-                
-                # 添加到扁平化数据
-                for c in citations:
-                    all_citations_data.append({
-                        "问题": result['question'],
-                        "网站": c.get("site", ""),
-                        "标题": c.get("title", ""),
-                        "URL": c.get("url", ""),
-                        "摘要": c.get("snippet", "")
-                    })
-            else:
-                st.info("📭 未找到引用来源")
+            # 创建DataFrame
+            display_df = pd.DataFrame()
+            display_df["序号"] = [c.get("cite_index", i+1) for i, c in enumerate(citations)]
+            display_df["网站"] = [c.get("site", "") for c in citations]
+            display_df["标题"] = [c.get("title", "") for c in citations]
+            display_df["URL"] = [c.get("url", "") for c in citations]
+            display_df["摘要"] = [c.get("snippet", "")[:100] + "..." if c.get("snippet") else "" for c in citations]
+            
+            # 显示表格
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "URL": st.column_config.LinkColumn("URL")
+                }
+            )
+            
+            # 添加到扁平化数据
+            for c in citations:
+                all_citations_data.append({
+                    "问题": result['question'],
+                    "网站": c.get("site", ""),
+                    "标题": c.get("title", ""),
+                    "URL": c.get("url", ""),
+                    "摘要": c.get("snippet", "")
+                })
+        else:
+            st.info("📭 未找到引用来源")
+        
+        st.markdown("---")
     
     # 下载扁平化数据
     if all_citations_data:
-        st.markdown("---")
         st.markdown("### 📥 导出引用数据")
         
         df_download = pd.DataFrame(all_citations_data)
