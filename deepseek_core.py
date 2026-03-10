@@ -278,16 +278,14 @@ class DeepSeekAnalyzer:
         print("❌ 登录超时")
         return False
     
-    # ===== 修复版语言检测 - 基于新对话按钮（最可靠）=====
+    # ===== 修复版语言检测 - 基于新对话按钮 =====
     async def detect_language(self):
-        """检测界面语言 - 基于新对话按钮，确保100%准确"""
+        """检测界面语言 - 基于新对话按钮"""
         try:
             print("🌐 正在检测界面语言...")
             
-            # 等待页面稳定
             await asyncio.sleep(2)
             
-            # 直接检查新对话按钮（始终存在）
             new_chat_text = await self.page.evaluate('''
                 () => {
                     const buttons = document.querySelectorAll('button, [role="button"]');
@@ -311,7 +309,6 @@ class DeepSeekAnalyzer:
                 self.is_english = False
                 print("🌐 检测到中文界面 (新对话按钮: 新对话)")
             else:
-                # 如果还找不到，默认英文
                 self.is_english = True
                 print("🌐 无法确定界面语言，默认英文")
             
@@ -319,7 +316,7 @@ class DeepSeekAnalyzer:
                 
         except Exception as e:
             print(f"⚠️ 语言检测失败: {e}")
-            self.is_english = True  # 默认英文
+            self.is_english = True
     
     # ===== 打开新对话 =====
     async def new_conversation(self, question_index):
@@ -540,9 +537,9 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击创建并复制出错: {e}")
             return False
 
-    # ===== 增强版DOM获取分享链接 =====
+    # ===== 修复版DOM获取分享链接 - 只提取纯链接 =====
     async def get_share_link_from_dom(self):
-        """从DOM中直接获取分享链接"""
+        """从DOM中直接获取分享链接 - 只提取纯链接"""
         print("从页面获取分享链接...")
         
         try:
@@ -556,10 +553,26 @@ class DeepSeekAnalyzer:
                     const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
                     if (!dialog) return null;
                     
-                    // 在弹窗中查找链接
+                    // 获取弹窗文本
                     const text = dialog.textContent || '';
+                    
+                    // 使用正则提取纯链接（不含后面的文字）
                     const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
-                    return match ? match[0] : null;
+                    
+                    // 如果找到，返回纯链接
+                    if (match) {
+                        return match[0];
+                    }
+                    
+                    // 备用方法：查找所有可能包含链接的元素
+                    const links = dialog.querySelectorAll('a[href*="share"], div[class*="link"]');
+                    for (const link of links) {
+                        const href = link.getAttribute('href') || link.textContent || '';
+                        const urlMatch = href.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                        if (urlMatch) return urlMatch[0];
+                    }
+                    
+                    return null;
                 }
             ''')
             
@@ -714,53 +727,3 @@ class DeepSeekAnalyzer:
         if self.playwright:
             await self.playwright.stop()
         print("👋 浏览器已关闭")
-
-    # ===== 修复版DOM获取分享链接 =====
-    async def get_share_link_from_dom(self):
-        """从DOM中直接获取分享链接 - 只提取纯链接"""
-        print("从页面获取分享链接...")
-        
-        try:
-            # 等待弹窗加载
-            await asyncio.sleep(3)
-            
-            # 查找分享弹窗中的链接
-            share_link = await self.page.evaluate('''
-                () => {
-                    // 查找分享弹窗
-                    const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
-                    if (!dialog) return null;
-                    
-                    // 获取弹窗文本
-                    const text = dialog.textContent || '';
-                    
-                    // 使用正则提取纯链接（不含后面的文字）
-                    const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
-                    
-                    // 如果找到，返回纯链接
-                    if (match) {
-                        return match[0];
-                    }
-                    
-                    // 备用方法：查找所有可能包含链接的元素
-                    const links = dialog.querySelectorAll('a[href*="share"], div[class*="link"]');
-                    for (const link of links) {
-                        const href = link.getAttribute('href') || link.textContent || '';
-                        const urlMatch = href.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
-                        if (urlMatch) return urlMatch[0];
-                    }
-                    
-                    return null;
-                }
-            ''')
-            
-            if share_link:
-                print(f"✅ 从弹窗获取到分享链接: {share_link}")
-                return share_link
-            
-            print("❌ 未找到分享链接")
-            return None
-            
-        except Exception as e:
-            print(f"❌ 获取分享链接出错: {e}")
-            return None
