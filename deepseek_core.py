@@ -25,10 +25,9 @@ class DeepSeekAnalyzer:
         self.cookies_dir.mkdir(exist_ok=True)
         self.cookie_file = self.cookies_dir / "cookies.json"
         
-        # ===== 方案A：使用 persistent context 的目录 =====
+        # 使用 persistent context 的目录
         self.user_data_dir = self.cookies_dir / "browser_data"
         self.user_data_dir.mkdir(exist_ok=True)
-        # ==============================================
         
         self.playwright = None
         self.context = None
@@ -38,13 +37,13 @@ class DeepSeekAnalyzer:
         self.citation_list = []  # 引用列表
         self.current_share_link = ""  # 当前问题的分享链接
         self.question_count = 0  # 记录问题序号
+        self.is_english = False  # 新增：判断是否为英文界面
         
     async def start(self):
-        """启动浏览器并设置监听 - 使用 persistent_context"""
+        """启动浏览器并设置监听"""
         print("🚀 启动浏览器...")
         self.playwright = await async_playwright().start()
         
-        # ===== 方案A：使用 launch_persistent_context =====
         # 启动参数
         launch_options = {
             'headless': self.headless,
@@ -57,7 +56,7 @@ class DeepSeekAnalyzer:
             ]
         }
         
-        # 创建持久化上下文（自动管理cookies和存储状态）
+        # 创建持久化上下文
         self.context = await self.playwright.chromium.launch_persistent_context(
             str(self.user_data_dir),
             **launch_options,
@@ -65,7 +64,6 @@ class DeepSeekAnalyzer:
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             permissions=['clipboard-read', 'clipboard-write']
         )
-        # =================================================
         
         # 设置网络监听
         await self.setup_network_listener()
@@ -84,7 +82,7 @@ class DeepSeekAnalyzer:
             """处理响应数据"""
             url = response.url
             
-            # ===== 捕获 SSE 流中的引用列表 =====
+            # 捕获 SSE 流中的引用列表
             if '/api/v0/chat/completion' in url:
                 headers = response.headers
                 content_type = headers.get('content-type', '')
@@ -116,19 +114,15 @@ class DeepSeekAnalyzer:
                                 except json.JSONDecodeError:
                                     pass
                     except Exception as e:
-                        # 忽略SSE处理错误，不影响主流程
                         pass
         
-        # 监听所有响应
         self.context.on('response', lambda response: asyncio.create_task(handle_response(response)))
     
-    # ===== 方案A：简化Cookie管理，persistent context自动处理 =====
     def is_cookies_valid(self):
-        """检查是否有持久化数据（通过目录是否存在且非空）"""
+        """检查是否有持久化数据"""
         if not self.user_data_dir.exists():
             return False
         
-        # 检查目录下是否有文件（表示有存储的数据）
         has_files = any(self.user_data_dir.iterdir())
         if has_files:
             print("✅ 发现已保存的浏览器数据")
@@ -136,16 +130,15 @@ class DeepSeekAnalyzer:
         return False
     
     async def load_cookies(self) -> bool:
-        """persistent context 自动加载，此方法保留但不再需要"""
+        """persistent context 自动加载"""
         return self.is_cookies_valid()
     
     async def save_cookies(self):
-        """persistent context 自动保存，此方法保留但不执行操作"""
+        """persistent context 自动保存"""
         print("✅ 浏览器数据已自动保存到:", self.user_data_dir)
-    # ===========================================================
     
     async def ensure_login(self) -> bool:
-        """确保已登录 - persistent context 自动处理cookies"""
+        """确保已登录"""
         print("\n========== 开始登录流程 ==========")
         
         print("【1】访问主页...")
@@ -156,6 +149,9 @@ class DeepSeekAnalyzer:
         try:
             await self.page.wait_for_selector('textarea', timeout=2000)
             print("✅ 已登录，无需再次登录")
+            
+            # 检测界面语言
+            await self.detect_language()
             return True
         except:
             print("🔐 未登录，开始手动登录流程")
@@ -271,7 +267,9 @@ class DeepSeekAnalyzer:
             try:
                 await self.page.wait_for_selector('textarea', timeout=1000)
                 print("✅ 登录成功！")
-                # persistent context 会自动保存，不需要额外操作
+                
+                # 检测界面语言
+                await self.detect_language()
                 return True
             except:
                 print(f"⏳ 等待登录... ({i+1}/15)")
@@ -280,23 +278,56 @@ class DeepSeekAnalyzer:
         print("❌ 登录超时")
         return False
     
+    # ===== 新增：检测界面语言 =====
+    async def detect_language(self):
+        """检测当前界面是中文还是英文"""
+        try:
+            # 检查是否有中文特征
+            has_chinese = await self.page.evaluate('''
+                () => {
+                    const text = document.body.textContent || '';
+                    return /[\\u4e00-\\u9fa5]/.test(text);
+                }
+            ''')
+            
+            # 检查特定按钮文本
+            has_english_share = await self.page.evaluate('''
+                () => {
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (let btn of buttons) {
+                        const text = btn.textContent || '';
+                        if (text.includes('Share') || text.includes('Create public link')) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            ''')
+            
+            if has_chinese and not has_english_share:
+                self.is_english = False
+                print("🌐 检测到中文界面")
+            else:
+                self.is_english = True
+                print("🌐 检测到英文界面")
+        except Exception as e:
+            print(f"⚠️ 语言检测失败，默认中文: {e}")
+            self.is_english = False
+    
     # ===== 打开新对话 =====
     async def new_conversation(self, question_index):
-        """强制开启新对话 - 确保每次都是新对话"""
+        """强制开启新对话"""
         print(f"\n🔄 准备第 {question_index+1} 个问题，开启新对话...")
         
         try:
-            # 方法1：点击新对话按钮
             result = await self.page.evaluate('''
                 () => {
-                    // 找新对话按钮
                     const newChatBtn = document.querySelector('div._5a8ac7a.a084f19e');
                     if (newChatBtn) {
                         newChatBtn.click();
                         return 'button_found';
                     }
                     
-                    // 找包含"新对话"或"New chat"的按钮
                     const buttons = document.querySelectorAll('button, [role="button"]');
                     for (let btn of buttons) {
                         const text = btn.textContent || '';
@@ -311,16 +342,13 @@ class DeepSeekAnalyzer:
             
             print(f"✅ 新对话操作: {result}")
             
-            # 方法2：如果没找到按钮，直接导航到新对话URL
             if result == 'not_found':
                 print("🔄 没找到新对话按钮，尝试通过URL重置")
                 await self.page.goto('https://chat.deepseek.com')
                 await asyncio.sleep(2)
             
-            # 等待新对话加载
             await asyncio.sleep(3)
             
-            # 确保输入框存在
             try:
                 await self.page.wait_for_selector('textarea', timeout=5000)
                 print("✅ 新对话已准备就绪")
@@ -331,39 +359,30 @@ class DeepSeekAnalyzer:
                 
         except Exception as e:
             print(f"⚠️ 开启新对话出错: {e}")
-            # 出错时强制刷新页面
             await self.page.reload()
             await asyncio.sleep(3)
     
     async def wait_for_answer_complete(self):
-        """等待AI回答完全生成 - 更可靠的检测方式"""
+        """等待AI回答完全生成"""
         print("等待AI生成完整回答...")
         
-        # 方法1：等待"停止生成"按钮出现再消失
         try:
-            # 等待"停止生成"按钮出现
             await self.page.wait_for_selector('button:has-text("停止生成")', timeout=10000)
             print("✅ 检测到开始生成")
-            
-            # 等待"停止生成"按钮消失（表示生成完成）
             await self.page.wait_for_selector('button:has-text("停止生成")', state='hidden', timeout=30000)
             print("✅ 检测到生成完成")
-            
-            # 额外等待1秒让数据稳定
             await asyncio.sleep(1)
             return True
             
         except Exception as e:
             print(f"⚠️ 按钮检测方式失败: {e}")
         
-        # 方法2：监控最后一条消息的内容变化
         print("监控内容变化...")
         last_length = 0
         stable_count = 0
         
-        for i in range(30):  # 最多等待30次
+        for i in range(30):
             try:
-                # 获取最后一条消息
                 messages = await self.page.query_selector_all('.ds-markdown, .markdown-body')
                 if messages:
                     last_msg = messages[-1]
@@ -373,10 +392,9 @@ class DeepSeekAnalyzer:
                     if current_length > 0:
                         print(f"⏳ 内容长度: {current_length} 字符")
                         
-                        # 如果长度稳定不变，计数增加
                         if current_length == last_length:
                             stable_count += 1
-                            if stable_count >= 3:  # 连续3次长度不变
+                            if stable_count >= 3:
                                 print("✅ 内容稳定，生成完成")
                                 await asyncio.sleep(1)
                                 return True
@@ -393,7 +411,7 @@ class DeepSeekAnalyzer:
         return True
     
     async def click_share_button(self):
-        """点击分享按钮 - 从 auto_deepseek.py 移植"""
+        """点击分享按钮"""
         try:
             result = await self.page.evaluate('''
                 () => {
@@ -423,24 +441,41 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击分享按钮出错: {e}")
             return False
 
+    # ===== 修改：添加中英文支持的创建分享按钮 =====
     async def click_create_share(self):
-        """点击创建分享按钮 - 从 auto_deepseek.py 移植"""
+        """点击创建分享按钮 - 支持中英文"""
         try:
-            result = await self.page.evaluate('''
-                () => {
-                    const buttons = document.querySelectorAll('button, [role="button"]');
-                    for (let btn of buttons) {
-                        const text = btn.textContent || '';
-                        if (text.includes('创建分享')) {
-                            btn.click();
-                            return true;
+            if self.is_english:
+                result = await self.page.evaluate('''
+                    () => {
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        for (let btn of buttons) {
+                            const text = btn.textContent || '';
+                            if (text.includes('Create public link')) {
+                                btn.click();
+                                return true;
+                            }
                         }
+                        return false;
                     }
-                    return false;
-                }
-            ''')
+                ''')
+            else:
+                result = await self.page.evaluate('''
+                    () => {
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        for (let btn of buttons) {
+                            const text = btn.textContent || '';
+                            if (text.includes('创建分享')) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                ''')
+            
             if result:
-                print("✅ 点击创建分享按钮")
+                print(f"✅ 点击创建分享按钮 ({'英文' if self.is_english else '中文'})")
                 await asyncio.sleep(2)
                 return True
             return False
@@ -448,26 +483,50 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击创建分享出错: {e}")
             return False
 
+    # ===== 修改：添加中英文支持的创建并复制按钮 =====
     async def click_create_and_copy(self):
-        """点击创建并复制按钮 - 从 auto_deepseek.py 移植"""
+        """点击创建并复制按钮 - 支持中英文"""
         try:
             await asyncio.sleep(2)
-            result = await self.page.evaluate('''
-                () => {
-                    const buttons = document.querySelectorAll('button, [role="button"]');
-                    for (let btn of buttons) {
-                        const text = btn.textContent || '';
-                        if (text.includes('创建并复制')) {
-                            btn.click();
-                            return true;
+            
+            if self.is_english:
+                copy_texts = ['Create and copy', 'Copy']
+                for text in copy_texts:
+                    result = await self.page.evaluate('''
+                        (target) => {
+                            const buttons = document.querySelectorAll('button, [role="button"]');
+                            for (let btn of buttons) {
+                                const btnText = btn.textContent || '';
+                                if (btnText.includes(target)) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
                         }
+                    ''', text)
+                    
+                    if result:
+                        print(f"✅ 点击 '{text}'")
+                        return True
+            else:
+                result = await self.page.evaluate('''
+                    () => {
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        for (let btn of buttons) {
+                            const text = btn.textContent || '';
+                            if (text.includes('创建并复制')) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
                     }
-                    return false;
-                }
-            ''')
-            if result:
-                print("✅ 点击 '创建并复制'")
-                return True
+                ''')
+                if result:
+                    print("✅ 点击 '创建并复制'")
+                    return True
+            
             return False
         except Exception as e:
             print(f"❌ 点击创建并复制出错: {e}")
@@ -479,29 +538,23 @@ class DeepSeekAnalyzer:
         print("从页面获取分享链接...")
         
         try:
-            # 等待分享链接输入框出现
             await asyncio.sleep(2)
             
-            # 查找包含分享链接的输入框
             link_input = await self.page.query_selector('input[readonly], input[type="text"][value*="share"]')
             
             if link_input:
-                # 获取输入框的值
                 share_link = await link_input.get_attribute('value')
                 if share_link and share_link.startswith('https://chat.deepseek.com/share/'):
                     print(f"✅ 从输入框获取到分享链接")
                     return share_link
             
-            # 备用方法：查找任何包含分享链接的文本元素
             share_link = await self.page.evaluate('''
                 () => {
-                    // 查找所有可能包含分享链接的元素
                     const elements = document.querySelectorAll('div, span, p, a');
                     for (let el of elements) {
                         const text = el.textContent || '';
                         if (text.includes('chat.deepseek.com/share/')) {
-                            // 提取链接
-                            const match = text.match(/https:\/\/chat\.deepseek\.com\/share\/[a-zA-Z0-9_]+/);
+                            const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
                             if (match) return match[0];
                         }
                     }
@@ -524,43 +577,35 @@ class DeepSeekAnalyzer:
         """分析单个问题，返回引用列表和分享链接"""
         print(f"\n🔍 分析: {question}")
         
-        # 重置数据
         self.citation_list = []
         self.current_share_link = ""
         
         try:
-            # 每次新问题都开启新对话
             await self.new_conversation(self.question_count)
             
-            # 输入问题
             input_box = await self.page.wait_for_selector('textarea')
             await input_box.fill(question)
             await input_box.press('Enter')
             print("📤 问题已发送")
             
-            # 等待回答完全生成
             await self.wait_for_answer_complete()
             print("✅ 回答完全生成")
             
-            # 等待一下让引用数据加载
             await asyncio.sleep(2)
             print(f"📚 已捕获 {len(self.citation_list)} 条引用")
             
-            # 使用DOM方式获取分享链接
             share_link = await self.get_share_link_from_dom()
             if share_link:
                 self.current_share_link = share_link
                 print(f"✅ 分享链接: {share_link}")
-                self.question_count += 1  # 问题序号+1
+                self.question_count += 1
             else:
-                # 如果DOM方式失败，尝试原来的剪贴板方式作为备选
                 print("⚠️ DOM方式获取失败，尝试剪贴板方式...")
                 share_link = await self.get_share_link()
                 if share_link:
                     self.current_share_link = share_link
                     self.question_count += 1
             
-            # 返回结果
             return {
                 "question": question,
                 "citations": self.citation_list,
@@ -580,9 +625,8 @@ class DeepSeekAnalyzer:
                 "timestamp": datetime.now().isoformat()
             }
     
-    # ===== 保留原来的剪贴板方式作为备选 =====
     async def get_share_link(self):
-        """获取分享链接 - 从 auto_deepseek.py 移植（剪贴板方式）"""
+        """获取分享链接 - 剪贴板方式"""
         print("获取分享链接（剪贴板方式）...")
         
         try:
