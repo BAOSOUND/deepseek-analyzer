@@ -278,24 +278,18 @@ class DeepSeekAnalyzer:
         print("❌ 登录超时")
         return False
     
+    # ===== 优化：更准确的语言检测 =====
     async def detect_language(self):
-        """检测当前界面是中文还是英文"""
+        """检测当前界面是中文还是英文 - 基于实际页面元素"""
         try:
-            # 检查是否有中文特征
-            has_chinese = await self.page.evaluate('''
-                () => {
-                    const text = document.body.textContent || '';
-                    return /[\\u4e00-\\u9fa5]/.test(text);
-                }
-            ''')
-            
-            # 检查特定按钮文本
+            # 方法1: 检查"Create public link"按钮是否存在
             has_english_share = await self.page.evaluate('''
                 () => {
+                    // 查找创建分享按钮
                     const buttons = document.querySelectorAll('button, [role="button"]');
                     for (let btn of buttons) {
                         const text = btn.textContent || '';
-                        if (text.includes('Share') || text.includes('Create public link')) {
+                        if (text.includes('Create public link')) {
                             return true;
                         }
                     }
@@ -303,16 +297,47 @@ class DeepSeekAnalyzer:
                 }
             ''')
             
-            if has_chinese and not has_english_share:
+            # 方法2: 检查是否有中文
+            has_chinese = await self.page.evaluate('''
+                () => {
+                    const text = document.body.textContent || '';
+                    return /[\\u4e00-\\u9fa5]/.test(text);
+                }
+            ''')
+            
+            # 方法3: 检查"创建分享"按钮
+            has_chinese_share = await self.page.evaluate('''
+                () => {
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (let btn of buttons) {
+                        const text = btn.textContent || '';
+                        if (text.includes('创建分享')) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            ''')
+            
+            # 综合判断
+            if has_english_share:
+                self.is_english = True
+                print("🌐 检测到英文界面 (找到 'Create public link' 按钮)")
+            elif has_chinese_share:
                 self.is_english = False
-                print("🌐 检测到中文界面")
+                print("🌐 检测到中文界面 (找到 '创建分享' 按钮)")
+            elif has_chinese:
+                self.is_english = False
+                print("🌐 检测到中文界面 (页面包含中文字符)")
             else:
                 self.is_english = True
-                print("🌐 检测到英文界面")
+                print("🌐 默认使用英文界面")
+                
         except Exception as e:
             print(f"⚠️ 语言检测失败，默认中文: {e}")
             self.is_english = False
     
+    # ===== 打开新对话 =====
     async def new_conversation(self, question_index):
         """强制开启新对话"""
         print(f"\n🔄 准备第 {question_index+1} 个问题，开启新对话...")
@@ -537,25 +562,49 @@ class DeepSeekAnalyzer:
             # 等待分享弹窗完全加载
             await asyncio.sleep(3)
             
-            # 方法1: 直接查找分享弹窗中的文本
+            # 方法1: 直接查找分享弹窗中的链接
             share_link = await self.page.evaluate('''
                 () => {
-                    // 查找分享弹窗
+                    // 查找分享弹窗 - 基于你的console输出
                     const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
-                    if (!dialog) return null;
+                    if (!dialog) {
+                        console.log("未找到分享弹窗");
+                        return null;
+                    }
+                    
+                    console.log("找到分享弹窗:", dialog.className);
                     
                     // 在弹窗中查找分享链接
                     const text = dialog.textContent || '';
+                    console.log("弹窗文本:", text.slice(0, 200));
+                    
                     const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
                     return match ? match[0] : null;
                 }
             ''')
             
             if share_link:
-                print(f"✅ 从弹窗文本获取到分享链接")
+                print(f"✅ 从弹窗文本获取到分享链接: {share_link}")
                 return share_link
             
-            # 方法2: 全局搜索
+            # 方法2: 如果没找到，打印详细调试信息
+            debug_info = await self.page.evaluate('''
+                () => {
+                    const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
+                    if (!dialog) return "未找到弹窗";
+                    
+                    return {
+                        class: dialog.className,
+                        text: dialog.textContent.slice(0, 300),
+                        html: dialog.outerHTML.slice(0, 500),
+                        children: dialog.children.length
+                    };
+                }
+            ''')
+            print(f"🔍 弹窗调试信息: {debug_info}")
+            
+            # 方法3: 全局搜索所有元素
+            print("🔍 尝试全局搜索...")
             share_link = await self.page.evaluate('''
                 () => {
                     const allElements = document.querySelectorAll('div, span, p, a');
@@ -563,6 +612,7 @@ class DeepSeekAnalyzer:
                         const text = el.textContent || '';
                         const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
                         if (match) {
+                            console.log("在元素中找到链接:", el.tagName, el.className);
                             return match[0];
                         }
                     }
@@ -571,7 +621,7 @@ class DeepSeekAnalyzer:
             ''')
             
             if share_link:
-                print(f"✅ 从全局文本获取到分享链接")
+                print(f"✅ 从全局文本获取到分享链接: {share_link}")
                 return share_link
             
             print("❌ 未找到分享链接")
