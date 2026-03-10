@@ -11,7 +11,6 @@ import sys
 import os
 import base64
 import subprocess
-import time
 from pathlib import Path
 import json
 
@@ -21,71 +20,39 @@ def setup_playwright():
     try:
         print("📦 正在检查playwright浏览器...")
         
-        # 设置 Playwright 浏览器安装路径到用户目录
-        cache_dir = Path.home() / ".cache" / "ms-playwright"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(cache_dir)
-        
-        print(f"📁 浏览器安装路径: {cache_dir}")
-        
-        # 检查浏览器是否已存在
-        browser_path = cache_dir / "chromium-1091" / "chrome-linux" / "chrome"
-        if browser_path.exists():
-            print(f"✅ 浏览器已存在: {browser_path}")
-            return True
+        # 设置 Playwright 浏览器安装路径
+        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
         
         # 安装 Chromium
-        print("📥 正在安装 Chromium 浏览器...")
         result = subprocess.run(
             ["playwright", "install", "chromium"],
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=120
         )
         
         if result.returncode == 0:
             print("✅ playwright浏览器安装成功")
             if result.stdout:
                 print(result.stdout)
-                
-            # 验证安装
-            if browser_path.exists():
-                print(f"✅ 浏览器验证成功: {browser_path}")
-            else:
-                print(f"⚠️ 浏览器安装路径不符，查找实际位置...")
-                # 查找实际安装位置
-                find_result = subprocess.run(
-                    ["find", str(cache_dir), "-name", "chrome", "-type", "f"],
-                    capture_output=True,
-                    text=True
-                )
-                if find_result.stdout:
-                    print(f"🔍 找到浏览器: {find_result.stdout}")
         else:
-            print(f"⚠️ 安装失败: {result.stderr}")
-            print("🔄 尝试安装所有浏览器...")
-            subprocess.run(["playwright", "install"], check=True, timeout=500)
+            print("⚠️ 安装失败，尝试安装所有浏览器...")
+            subprocess.run(["playwright", "install"], check=True, timeout=300)
             
     except subprocess.TimeoutExpired:
         print("⏱️ 安装超时，但可能已部分完成")
     except Exception as e:
         print(f"⚠️ playwright安装警告: {e}")
-        import traceback
-        traceback.print_exc()
 
 # 在Linux环境下执行（Streamlit Cloud）
 if sys.platform.startswith('linux'):
-    print("🐧 Linux环境检测，开始安装playwright浏览器...")
     setup_playwright()
-else:
-    print(f"🖥️ Windows环境，跳过playwright安装")
 # ======================================
 
 # Windows平台修复
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-# 导入自定义模块前确保playwright已安装
 from deepseek_core import DeepSeekAnalyzer
 
 st.set_page_config(
