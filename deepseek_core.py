@@ -785,3 +785,449 @@ class DeepSeekAnalyzer:
         if self.playwright:
             await self.playwright.stop()
         print("👋 浏览器已关闭")
+
+    # ===== 增强版DOM获取分享链接 =====
+    async def get_share_link_from_dom(self):
+        """从DOM中直接获取分享链接 - 增强调试版"""
+        print("从页面获取分享链接...")
+        
+        try:
+            # 增加等待时间，确保弹窗完全加载
+            await asyncio.sleep(5)
+            
+            # 先打印当前页面的所有弹窗
+            print("🔍 检查页面中的弹窗...")
+            dialogs = await self.page.evaluate('''
+                () => {
+                    const dialogs = [];
+                    // 查找所有可能的弹窗
+                    const possibleDialogs = document.querySelectorAll('div[role="dialog"], div.ds-modal, div.ds-modal-content, [class*="dialog"]');
+                    possibleDialogs.forEach((el, i) => {
+                        dialogs.push({
+                            index: i,
+                            class: el.className,
+                            role: el.getAttribute('role'),
+                            html: el.outerHTML.slice(0, 200),
+                            text: el.textContent.slice(0, 100)
+                        });
+                    });
+                    return dialogs;
+                }
+            ''')
+            
+            if dialogs and len(dialogs) > 0:
+                print(f"📋 找到 {len(dialogs)} 个弹窗:")
+                for d in dialogs:
+                    print(f"  - 弹窗 {d['index']+1}: class={d['class']}, role={d['role']}")
+                    print(f"    文本: {d['text']}")
+            else:
+                print("❌ 未找到任何弹窗")
+            
+            # 方法1: 精确选择器 - 基于你的console数据
+            share_link = await self.page.evaluate('''
+                () => {
+                    // 查找分享弹窗
+                    const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
+                    if (!dialog) {
+                        console.log("未找到分享弹窗");
+                        return null;
+                    }
+                    
+                    console.log("找到弹窗，查找链接...");
+                    
+                    // 在弹窗中查找所有可能包含链接的元素
+                    const possibleElements = dialog.querySelectorAll('div, span, p, input');
+                    for (const el of possibleElements) {
+                        const text = el.textContent || el.value || '';
+                        const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                        if (match) {
+                            console.log("在元素中找到链接:", el.tagName, el.className);
+                            return match[0];
+                        }
+                    }
+                    
+                    // 如果没找到，返回弹窗内容用于调试
+                    return {
+                        found: false,
+                        dialogHtml: dialog.outerHTML.slice(0, 500),
+                        dialogText: dialog.textContent.slice(0, 300)
+                    };
+                }
+            ''')
+            
+            if share_link and isinstance(share_link, str) and share_link.startswith('http'):
+                print(f"✅ 从弹窗获取到分享链接: {share_link}")
+                return share_link
+            
+            # 如果返回的是调试信息，打印出来
+            if isinstance(share_link, dict):
+                print(f"🔍 弹窗内容: {share_link}")
+            
+            # 方法2: 全局搜索所有元素
+            print("🔍 全局搜索所有包含 'share' 的元素...")
+            all_elements = await self.page.evaluate('''
+                () => {
+                    const results = [];
+                    const allElements = document.querySelectorAll('div, span, p, a, input');
+                    for (const el of allElements) {
+                        const text = el.textContent || el.value || '';
+                        if (text.includes('share') || text.includes('chat.deepseek.com')) {
+                            results.push({
+                                tag: el.tagName,
+                                class: el.className,
+                                text: text.slice(0, 100),
+                                value: el.value ? el.value.slice(0, 100) : null
+                            });
+                        }
+                    }
+                    return results;
+                }
+            ''')
+            
+            if all_elements and len(all_elements) > 0:
+                print(f"📋 找到 {len(all_elements)} 个相关元素:")
+                for el in all_elements[:10]:  # 只显示前10个
+                    print(f"  - {el}")
+            else:
+                print("❌ 未找到任何相关元素")
+            
+            # 方法3: 直接搜索链接
+            print("🔍 直接搜索分享链接...")
+            share_link = await self.page.evaluate('''
+                () => {
+                    const bodyText = document.body.textContent || '';
+                    const match = bodyText.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                    return match ? match[0] : null;
+                }
+            ''')
+            
+            if share_link:
+                print(f"✅ 在页面文本中找到分享链接: {share_link}")
+                return share_link
+            
+            print("❌ 所有方法都未找到分享链接")
+            return None
+            
+        except Exception as e:
+            print(f"❌ 获取分享链接出错: {e}")
+            return None
+
+    async def click_share_button(self):
+        """点击分享按钮 - 增加详细日志"""
+        print("尝试点击分享按钮...")
+        
+        try:
+            # 方法1: 通过SVG路径查找
+            result = await self.page.evaluate('''
+                () => {
+                    console.log("查找分享按钮...");
+                    const buttons = document.querySelectorAll('[role="button"]');
+                    console.log("找到按钮数量:", buttons.length);
+                    
+                    for (let btn of buttons) {
+                        const svg = btn.querySelector('svg');
+                        if (svg) {
+                            const path = svg.querySelector('path');
+                            if (path) {
+                                const d = path.getAttribute('d') || '';
+                                console.log("检查SVG路径:", d.slice(0, 50));
+                                if (d.includes('M7.95889 1.52285')) {
+                                    console.log("找到分享按钮!");
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                }
+            ''')
+            
+            if result:
+                print("✅ 点击分享按钮成功")
+                await asyncio.sleep(3)  # 等待第一个弹窗
+                
+                # 检查是否有弹窗出现
+                has_dialog = await self.page.evaluate('''
+                    () => {
+                        const dialogs = document.querySelectorAll('[role="dialog"], .ds-modal, .ds-modal-content');
+                        console.log("弹窗数量:", dialogs.length);
+                        return dialogs.length > 0;
+                    }
+                ''')
+                
+                if has_dialog:
+                    print("✅ 分享弹窗已出现")
+                else:
+                    print("⚠️ 未检测到分享弹窗")
+                    
+                return True
+                
+            print("❌ 未找到分享按钮")
+            return False
+            
+        except Exception as e:
+            print(f"❌ 点击分享按钮出错: {e}")
+            return False
+
+    async def click_create_share(self):
+        """点击创建分享按钮 - 增加详细日志"""
+        print("尝试点击创建分享按钮...")
+        
+        try:
+            if self.is_english:
+                print("🔍 英文界面，查找 'Create public link' 按钮...")
+                result = await self.page.evaluate('''
+                    () => {
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        console.log("找到按钮数量:", buttons.length);
+                        
+                        for (let btn of buttons) {
+                            const text = btn.textContent || '';
+                            console.log("按钮文本:", text);
+                            if (text.includes('Create public link')) {
+                                console.log("找到创建分享按钮!");
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                ''')
+            else:
+                print("🔍 中文界面，查找 '创建分享' 按钮...")
+                result = await self.page.evaluate('''
+                    () => {
+                        const buttons = document.querySelectorAll('button, [role="button"]');
+                        console.log("找到按钮数量:", buttons.length);
+                        
+                        for (let btn of buttons) {
+                            const text = btn.textContent || '';
+                            console.log("按钮文本:", text);
+                            if (text.includes('创建分享')) {
+                                console.log("找到创建分享按钮!");
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                ''')
+            
+            if result:
+                print("✅ 点击创建分享按钮成功")
+                await asyncio.sleep(3)  # 等待第二个弹窗
+                
+                # 检查是否有第二个弹窗
+                has_dialog = await self.page.evaluate('''
+                    () => {
+                        const dialogs = document.querySelectorAll('[role="dialog"], .ds-modal, .ds-modal-content');
+                        console.log("二级弹窗数量:", dialogs.length);
+                        return dialogs.length > 0;
+                    }
+                ''')
+                
+                if has_dialog:
+                    print("✅ 二级弹窗已出现")
+                else:
+                    print("⚠️ 未检测到二级弹窗")
+                    
+                return True
+                
+            print("❌ 未找到创建分享按钮")
+            return False
+            
+        except Exception as e:
+            print(f"❌ 点击创建分享出错: {e}")
+            return False
+
+    async def get_share_link_from_dom(self):
+        """从DOM中直接获取分享链接 - 增强调试版"""
+        print("从页面获取分享链接...")
+        
+        try:
+            # 增加等待时间，确保弹窗完全加载
+            await asyncio.sleep(5)
+            
+            # 先打印当前页面的所有弹窗
+            print("🔍 检查页面中的弹窗...")
+            dialogs = await self.page.evaluate('''
+                () => {
+                    const dialogs = [];
+                    // 查找所有可能的弹窗
+                    const possibleDialogs = document.querySelectorAll('div[role="dialog"], div.ds-modal, div.ds-modal-content, [class*="dialog"]');
+                    possibleDialogs.forEach((el, i) => {
+                        dialogs.push({
+                            index: i,
+                            class: el.className,
+                            role: el.getAttribute('role'),
+                            text: el.textContent.slice(0, 200)
+                        });
+                    });
+                    return dialogs;
+                }
+            ''')
+            
+            if dialogs and len(dialogs) > 0:
+                print(f"📋 找到 {len(dialogs)} 个弹窗:")
+                for d in dialogs:
+                    print(f"  - 弹窗 {d['index']+1}: class={d['class']}, role={d['role']}")
+                    print(f"    文本: {d['text']}")
+                    
+                    # 在弹窗中查找链接
+                    if 'share' in d['text'] or 'chat.deepseek.com' in d['text']:
+                        print(f"    这个弹窗可能包含分享链接!")
+            else:
+                print("❌ 未找到任何弹窗")
+                # 打印整个页面内容的前500字符用于调试
+                page_preview = await self.page.evaluate('() => document.body.textContent.slice(0, 500)')
+                print(f"📄 页面预览: {page_preview}")
+            
+            # 原有的查找逻辑...
+            share_link = await self.page.evaluate('''
+                () => {
+                    // 查找分享弹窗
+                    const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
+                    if (!dialog) {
+                        return null;
+                    }
+                    
+                    // 在弹窗中查找链接
+                    const possibleElements = dialog.querySelectorAll('div, span, p, input');
+                    for (const el of possibleElements) {
+                        const text = el.textContent || el.value || '';
+                        const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                        if (match) {
+                            return match[0];
+                        }
+                    }
+                    return null;
+                }
+            ''')
+            
+            if share_link:
+                print(f"✅ 从弹窗获取到分享链接: {share_link}")
+                return share_link
+            
+            # 全局搜索
+            print("🔍 全局搜索分享链接...")
+            share_link = await self.page.evaluate('''
+                () => {
+                    const bodyText = document.body.textContent || '';
+                    const match = bodyText.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                    return match ? match[0] : null;
+                }
+            ''')
+            
+            if share_link:
+                print(f"✅ 在页面文本中找到分享链接: {share_link}")
+                return share_link
+            
+            print("❌ 所有方法都未找到分享链接")
+            return None
+            
+        except Exception as e:
+            print(f"❌ 获取分享链接出错: {e}")
+            return None
+
+    async def analyze_question(self, question: str) -> Dict:
+        """分析单个问题，返回引用列表和分享链接 - 修复版"""
+        print(f"\n🔍 分析: {question}")
+        
+        self.citation_list = []
+        self.current_share_link = ""
+        
+        try:
+            await self.new_conversation(self.question_count)
+            
+            input_box = await self.page.wait_for_selector('textarea')
+            await input_box.fill(question)
+            await input_box.press('Enter')
+            print("📤 问题已发送")
+            
+            await self.wait_for_answer_complete()
+            print("✅ 回答完全生成")
+            
+            await asyncio.sleep(2)
+            print(f"📚 已捕获 {len(self.citation_list)} 条引用")
+            
+            # ===== 修复：先点击按钮获取分享链接 =====
+            print("🔄 开始获取分享链接...")
+            
+            # 1. 点击分享按钮
+            if not await self.click_share_button():
+                print("❌ 点击分享按钮失败")
+                return {
+                    "question": question,
+                    "citations": self.citation_list,
+                    "citation_count": len(self.citation_list),
+                    "share_link": "",
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            # 2. 点击创建分享按钮
+            if not await self.click_create_share():
+                print("❌ 点击创建分享按钮失败")
+                return {
+                    "question": question,
+                    "citations": self.citation_list,
+                    "citation_count": len(self.citation_list),
+                    "share_link": "",
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            # 3. 点击创建并复制按钮
+            if not await self.click_create_and_copy():
+                print("❌ 点击创建并复制按钮失败")
+                return {
+                    "question": question,
+                    "citations": self.citation_list,
+                    "citation_count": len(self.citation_list),
+                    "share_link": "",
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            # 4. 等待一下让链接生成
+            await asyncio.sleep(2)
+            
+            # 5. 尝试从DOM获取链接（剪贴板方式在云端可能不可用）
+            share_link = await self.get_share_link_from_dom()
+            
+            # 6. 如果DOM方式失败，尝试剪贴板方式（作为备选）
+            if not share_link:
+                print("⚠️ DOM方式获取失败，尝试剪贴板方式...")
+                for attempt in range(3):
+                    try:
+                        share_link = await self.page.evaluate('async () => await navigator.clipboard.readText()')
+                        if share_link and share_link.startswith('https://chat.deepseek.com/share/'):
+                            print(f"✅ 从剪贴板获取到分享链接")
+                            break
+                    except Exception as e:
+                        print(f"⏳ 等待剪贴板... ({attempt+1}/3)")
+                    await asyncio.sleep(1)
+            
+            if share_link:
+                self.current_share_link = share_link
+                print(f"✅ 分享链接: {share_link}")
+                self.question_count += 1
+            else:
+                print("⚠️ 所有方式都未获取到分享链接")
+            
+            return {
+                "question": question,
+                "citations": self.citation_list,
+                "citation_count": len(self.citation_list),
+                "share_link": self.current_share_link,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            print(f"❌ 分析出错: {e}")
+            return {
+                "question": question,
+                "citations": [],
+                "citation_count": 0,
+                "share_link": "",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
