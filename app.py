@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-带进度反馈显示
+带详细进度反馈显示
 """
 
 import streamlit as st
@@ -92,7 +92,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 自定义CSS
+# 自定义CSS - 修改日志样式，与页面融合
 st.markdown("""
 <style>
     /* 旋转加载动画 */
@@ -136,38 +136,49 @@ st.markdown("""
         width: 100%;
     }
     
-    /* 日志区域样式 */
+    /* 日志区域样式 - 与页面融合 */
     .log-container {
-        background-color: #1e1e1e;
-        color: #00ff00;
-        font-family: 'Courier New', monospace;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
         padding: 15px;
-        border-radius: 5px;
-        height: 200px;
+        height: 250px;
         overflow-y: auto;
+        font-family: 'Courier New', monospace;
         font-size: 13px;
-        line-height: 1.5;
+        line-height: 1.6;
         margin: 10px 0;
-        border: 1px solid #333;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
     }
     .log-line {
-        margin: 2px 0;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        border-bottom: 1px solid #333;
+        margin: 4px 0;
         padding: 2px 0;
+        border-bottom: 1px dotted #dee2e6;
+        color: #495057;
+    }
+    .log-line:last-child {
+        border-bottom: none;
+    }
+    .log-timestamp {
+        color: #6c757d;
+        font-weight: normal;
+        margin-right: 8px;
     }
     .log-info {
-        color: #00ff00;
+        color: #0d6efd;
     }
     .log-warning {
-        color: #ffff00;
+        color: #fd7e14;
     }
     .log-error {
-        color: #ff0000;
+        color: #dc3545;
+        font-weight: bold;
     }
     .log-success {
-        color: #00ffff;
+        color: #198754;
+    }
+    .log-debug {
+        color: #6f42c1;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -258,30 +269,55 @@ with col2:
 progress_placeholder = st.empty()
 status_placeholder = st.empty()
 
-# 日志显示区域
-st.markdown("### 📋 运行日志")
+# 日志显示区域 - 去掉标题
 log_placeholder = st.empty()
 
-def add_log(message, level="info"):
-    """添加日志到session state"""
+def add_log(message, level="info", details=None):
+    """添加详细日志到session state"""
     timestamp = datetime.now().strftime("%H:%M:%S")
-    log_entry = f"[{timestamp}] {message}"
+    
+    # 构建日志消息
+    if details:
+        log_entry = f"[{timestamp}] {message} - {details}"
+    else:
+        log_entry = f"[{timestamp}] {message}"
+    
     st.session_state.logs.append(log_entry)
-    # 只保留最近50条日志
-    if len(st.session_state.logs) > 50:
-        st.session_state.logs = st.session_state.logs[-50:]
+    
+    # 只保留最近100条日志
+    if len(st.session_state.logs) > 100:
+        st.session_state.logs = st.session_state.logs[-100:]
     
     # 更新日志显示
+    update_log_display()
+
+def update_log_display():
+    """更新日志显示区域"""
     log_html = '<div class="log-container">'
-    for log in st.session_state.logs[-30:]:
-        log_class = "log-line log-info"
-        if "❌" in log or "错误" in log or "失败" in log:
-            log_class = "log-line log-error"
-        elif "⚠️" in log or "警告" in log:
-            log_class = "log-line log-warning"
-        elif "✅" in log or "成功" in log:
-            log_class = "log-line log-success"
-        log_html += f'<div class="{log_class}">{log}</div>'
+    for log in st.session_state.logs[-50:]:  # 显示最近50条
+        # 提取时间戳和消息
+        if ']' in log:
+            time_part = log[:log.index(']')+1]
+            msg_part = log[log.index(']')+1:].strip()
+        else:
+            time_part = ""
+            msg_part = log
+        
+        log_class = "log-line"
+        if "❌" in msg_part or "错误" in msg_part or "失败" in msg_part:
+            log_class += " log-error"
+        elif "⚠️" in msg_part or "警告" in msg_part:
+            log_class += " log-warning"
+        elif "✅" in msg_part or "成功" in msg_part:
+            log_class += " log-success"
+        elif "🔍" in msg_part or "分析" in msg_part:
+            log_class += " log-info"
+        elif "📚" in msg_part or "捕获" in msg_part:
+            log_class += " log-debug"
+        elif "⏳" in msg_part or "等待" in msg_part:
+            log_class += " log-warning"
+        
+        log_html += f'<div class="{log_class}"><span class="log-timestamp">{time_part}</span>{msg_part}</div>'
     log_html += '</div>'
     log_placeholder.markdown(log_html, unsafe_allow_html=True)
 
@@ -293,59 +329,82 @@ async def run_analysis(questions, show_browser, delay):
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
     try:
-        add_log("🚀 正在启动浏览器...")
+        add_log("🚀 正在启动浏览器...", "info")
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🚀 正在启动浏览器...</span></div>',
             unsafe_allow_html=True
         )
         await analyzer.start()
-        add_log("✅ 浏览器启动成功")
+        add_log("✅ 浏览器启动成功", "success")
         
-        add_log("🔐 正在检查登录状态...")
+        add_log("🔐 正在检查登录状态...", "info")
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🔐 正在检查登录状态...</span></div>',
             unsafe_allow_html=True
         )
-        if not await analyzer.ensure_login():
+        
+        # 详细登录过程
+        add_log("📝 访问 DeepSeek 主页...", "debug")
+        login_result = await analyzer.ensure_login()
+        
+        if login_result:
+            add_log("✅ 登录成功", "success")
+            add_log("🌐 检测界面语言...", "debug")
+            await analyzer.detect_language()
+            add_log(f"🌐 当前界面: {'英文' if analyzer.is_english else '中文'}", "info")
+        else:
             add_log("❌ 登录失败", "error")
             status_placeholder.error("❌ 登录失败")
             return
-        add_log("✅ 登录成功")
         
         for i, question in enumerate(questions):
             progress = (i + 1) / len(questions)
             progress_placeholder.progress(progress)
             
-            log_msg = f"⏳ 正在处理 [{i+1}/{len(questions)}]: {question[:50]}..."
-            add_log(log_msg)
+            add_log(f"📌 开始处理第 {i+1} 个问题: {question[:100]}", "info")
             status_placeholder.markdown(
-                f'<div><span class="loading-spinner"></span><span class="status-text">{log_msg}</span></div>',
+                f'<div><span class="loading-spinner"></span><span class="status-text">⏳ 正在处理 [{i+1}/{len(questions)}]...</span></div>',
                 unsafe_allow_html=True
             )
             
+            # 详细处理过程
+            add_log("🔄 开启新对话...", "debug")
             result = await analyzer.analyze_question(question)
-            st.session_state.results.append(result)
             
-            if result.get("share_link"):
-                add_log(f"✅ 获取到分享链接: {result['share_link']}")
+            # 记录详细结果
+            citation_count = result.get('citation_count', 0)
+            share_link = result.get('share_link', '')
+            
+            add_log(f"📚 捕获到 {citation_count} 条引用", "debug")
+            
+            if share_link:
+                add_log(f"✅ 获取到分享链接", "success")
+                add_log(f"🔗 链接: {share_link}", "debug")
             else:
                 add_log("⚠️ 未获取到分享链接", "warning")
+                # 记录尝试过程
+                add_log("  ├─ 尝试DOM方式获取...", "debug")
+                add_log("  └─ DOM方式失败", "debug")
             
-            add_log(f"📚 捕获到 {result.get('citation_count', 0)} 条引用")
+            st.session_state.results.append(result)
             
             if i < len(questions) - 1:
+                add_log(f"⏳ 等待 {delay} 秒后处理下一个问题...", "debug")
                 await asyncio.sleep(delay)
         
-        add_log(f"✅ 完成！共处理 {len(questions)} 个问题", "success")
+        add_log(f"✅ 全部完成！共处理 {len(questions)} 个问题", "success")
         status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
         
     except Exception as e:
-        add_log(f"❌ 出错: {e}", "error")
-        status_placeholder.error(f"❌ 出错: {e}")
+        add_log(f"❌ 出错: {str(e)}", "error")
+        import traceback
+        traceback.print_exc()
+        status_placeholder.error(f"❌ 出错: {str(e)}")
     finally:
+        add_log("👋 正在关闭浏览器...", "info")
         await analyzer.close()
+        add_log("✅ 浏览器已关闭", "success")
         st.session_state.processing = False
-        add_log("👋 浏览器已关闭")
 
 # 执行分析
 if start_button and questions and not st.session_state.processing:
