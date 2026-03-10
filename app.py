@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-带详细进度反馈显示 - 捕获所有 print 输出
+带详细进度反馈显示 - 修复重置按钮
 """
 
 import streamlit as st
@@ -193,6 +193,31 @@ if 'processing' not in st.session_state:
     st.session_state.processing = False
 if 'logs' not in st.session_state:
     st.session_state.logs = []
+if 'login_status' not in st.session_state:
+    st.session_state.login_status = "unknown"
+if 'reset_trigger' not in st.session_state:
+    st.session_state.reset_trigger = 0
+
+# ===== 更准确的登录状态检测 =====
+def check_login_status():
+    """检查登录状态 - 基于persistent context"""
+    browser_data_dir = Path("cookies/browser_data")
+    
+    # 检查Local Storage文件
+    local_storage_file = browser_data_dir / "Local Storage" / "leveldb"
+    cookies_file = browser_data_dir / "Cookies"
+    
+    has_storage = False
+    if browser_data_dir.exists():
+        if local_storage_file.exists() and any(local_storage_file.iterdir()):
+            has_storage = True
+        if cookies_file.exists() and cookies_file.stat().st_size > 100:
+            has_storage = True
+    
+    return has_storage
+
+# 更新session state中的登录状态
+st.session_state.login_status = check_login_status()
 
 # 侧边栏配置
 with st.sidebar:
@@ -226,13 +251,12 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # 登录状态提示
-    cookies_dir = Path("cookies")
-    browser_data_dir = Path("cookies/browser_data")
-    if browser_data_dir.exists() and any(browser_data_dir.iterdir()):
-        st.success("✅ 已保存登录状态")
+    # ===== 登录状态显示 =====
+    if st.session_state.login_status:
+        st.success("✅ 已保存登录状态 (下次运行自动登录)")
+        st.caption("📌 浏览器数据已持久化")
     else:
-        st.warning("⚠️ 首次运行需要登录")
+        st.warning("⚠️ 首次运行需要登录 (登录后会自动保存状态)")
     
     st.markdown("---")
     st.caption("正在提取时需要时间，宝宝请耐心等待哦！")
@@ -244,7 +268,7 @@ questions_text = st.text_area(
     "问题列表",
     height=150,
     placeholder="每行一个问题，例如：\nPython异步编程的优点\n机器学习入门方法\n2024年AI发展趋势",
-    key="questions_input",
+    key=f"questions_input_{st.session_state.reset_trigger}",  # 使用reset_trigger刷新key
     label_visibility="collapsed"
 )
 
@@ -261,9 +285,14 @@ with col1:
     )
 
 with col2:
+    # ===== 修复：重置按钮 =====
     if st.button("🔄 重置", use_container_width=True, disabled=st.session_state.processing):
+        # 清空所有状态
         st.session_state.results = []
         st.session_state.logs = []
+        st.session_state.processing = False
+        # 增加reset_trigger强制刷新输入框
+        st.session_state.reset_trigger += 1
         st.rerun()
 
 # 进度显示
@@ -284,7 +313,6 @@ class LogCapture:
     def write(self, message):
         if message.strip():
             timestamp = datetime.now().strftime("%H:%M:%S")
-            # 按行分割，处理多行消息
             lines = message.strip().split('\n')
             for line in lines:
                 if line.strip():
@@ -292,7 +320,6 @@ class LogCapture:
                     self.logs_list.append(log_entry)
                     self.buffer.append(log_entry)
             
-            # 只保留最近100条日志
             if len(self.logs_list) > 100:
                 self.logs_list[:] = self.logs_list[-100:]
             
@@ -303,8 +330,7 @@ class LogCapture:
     
     def update_display(self):
         log_html = '<div class="log-container">'
-        for log in self.logs_list[-50:]:  # 显示最近50条
-            # 提取时间戳和消息
+        for log in self.logs_list[-50:]:
             if ']' in log:
                 time_part = log[:log.index(']')+1]
                 msg_part = log[log.index(']')+1:].strip()
@@ -312,7 +338,6 @@ class LogCapture:
                 time_part = ""
                 msg_part = log
             
-            # 根据消息内容确定样式
             log_class = "log-line"
             if "❌" in msg_part or "错误" in msg_part or "失败" in msg_part:
                 log_class += " log-error"
@@ -341,7 +366,7 @@ log_capture = LogCapture(log_placeholder, st.session_state.logs)
 async def run_analysis(questions, show_browser, delay):
     """运行批量分析"""
     st.session_state.processing = True
-    st.session_state.logs = []  # 清空旧日志
+    st.session_state.logs = []
     
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
@@ -356,7 +381,6 @@ async def run_analysis(questions, show_browser, delay):
         log_capture.write("🚀 开始批量处理任务")
         log_capture.write("=" * 50)
         
-        # 更新状态显示
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🚀 正在启动浏览器...</span></div>',
             unsafe_allow_html=True
@@ -373,6 +397,9 @@ async def run_analysis(questions, show_browser, delay):
             log_capture.write("❌ 登录失败")
             status_placeholder.error("❌ 登录失败")
             return
+        
+        # 登录成功后更新登录状态
+        st.session_state.login_status = True
         
         for i, question in enumerate(questions):
             progress = (i + 1) / len(questions)
@@ -392,7 +419,7 @@ async def run_analysis(questions, show_browser, delay):
             log_capture.write(f"📊 处理完成:")
             log_capture.write(f"  ├─ 引用数量: {result.get('citation_count', 0)} 条")
             if result.get('share_link'):
-                log_capture.write(f"  ├─ 分享链接: {result['share_link']}")
+                log_capture.write(f"  └─ 分享链接: {result['share_link']}")
             else:
                 log_capture.write(f"  └─ 分享链接: 未获取到")
             
@@ -415,7 +442,6 @@ async def run_analysis(questions, show_browser, delay):
         await analyzer.close()
         log_capture.write("✅ 浏览器已关闭")
         st.session_state.processing = False
-        # 恢复标准输出
         sys.stdout = old_stdout
         sys.stderr = old_stderr
 
@@ -428,12 +454,10 @@ if st.session_state.results:
     st.markdown("---")
     st.markdown("### 📊 提取结果")
     
-    # 准备所有引用的扁平化数据
     all_citations_data = []
     
     for idx, result in enumerate(st.session_state.results):
         with st.expander(f"📌 问题 {idx+1}: {result['question']}", expanded=True):
-            # 显示分享链接
             share_link = result.get("share_link", "")
             if share_link:
                 st.markdown(f"""
@@ -444,12 +468,10 @@ if st.session_state.results:
             else:
                 st.warning("⚠️ 未生成分享链接")
             
-            # 显示引用来源表格
             citations = result.get("citations", [])
             if citations:
                 st.markdown(f"**📚 引用来源 ({len(citations)} 条)**")
                 
-                # 创建DataFrame
                 display_df = pd.DataFrame()
                 display_df["序号"] = [c.get("cite_index", i+1) for i, c in enumerate(citations)]
                 display_df["网站"] = [c.get("site", "") for c in citations]
@@ -457,7 +479,6 @@ if st.session_state.results:
                 display_df["URL"] = [c.get("url", "") for c in citations]
                 display_df["摘要"] = [c.get("snippet", "")[:100] + "..." if c.get("snippet") else "" for c in citations]
                 
-                # 显示表格
                 st.dataframe(
                     display_df,
                     use_container_width=True,
@@ -467,7 +488,6 @@ if st.session_state.results:
                     }
                 )
                 
-                # 添加到扁平化数据
                 for c in citations:
                     all_citations_data.append({
                         "问题": result['question'],
@@ -479,7 +499,6 @@ if st.session_state.results:
             else:
                 st.info("📭 未找到引用来源")
     
-    # 下载扁平化数据
     if all_citations_data:
         st.markdown("---")
         st.markdown("### 📥 导出引用数据")
