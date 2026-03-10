@@ -88,11 +88,20 @@ if sys.platform == "win32":
 
 from deepseek_core import DeepSeekAnalyzer
 
+# 必须先设置页面配置
 st.set_page_config(
     page_title="DeepSeek 引用提取器",
     page_icon="🔗",
     layout="wide"
 )
+
+# 初始化session state
+if 'results' not in st.session_state:
+    st.session_state.results = []
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+if 'logs' not in st.session_state:
+    st.session_state.logs = []
 
 # 自定义CSS
 st.markdown("""
@@ -169,46 +178,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🔗 DeepSeek 引用提取器")
-
-# 初始化session state
-if 'results' not in st.session_state:
-    st.session_state.results = []
-if 'processing' not in st.session_state:
-    st.session_state.processing = False
-if 'logs' not in st.session_state:
-    st.session_state.logs = []
-
-# ===== 日志捕获类 =====
-class LogCapture:
-    def __init__(self, placeholder):
-        self.placeholder = placeholder
-        self.logs = []
-        
-    def write(self, message):
-        if message.strip():
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            log_entry = f"[{timestamp}] {message.strip()}"
-            self.logs.append(log_entry)
-            st.session_state.logs.append(log_entry)
-            # 只保留最近50条日志
-            if len(st.session_state.logs) > 50:
-                st.session_state.logs = st.session_state.logs[-50:]
-            self.update_display()
-    
-    def flush(self):
-        pass
-    
-    def update_display(self):
-        log_html = '<div class="log-container">'
-        for log in st.session_state.logs[-30:]:  # 只显示最近30条
-            log_class = "log-line log-info"
-            if "❌" in log or "错误" in log or "失败" in log:
-                log_class = "log-line log-error"
-            elif "⚠️" in log or "警告" in log:
-                log_class = "log-line log-warning"
-            log_html += f'<div class="{log_class}">{log}</div>'
-        log_html += '</div>'
-        self.placeholder.markdown(log_html, unsafe_allow_html=True)
 
 # ===== 侧边栏配置 =====
 with st.sidebar:
@@ -290,13 +259,43 @@ status_placeholder = st.empty()
 st.markdown("### 📋 运行日志")
 log_placeholder = st.empty()
 
-# 初始化日志捕获
-log_capture = LogCapture(log_placeholder)
+# ===== 修复：修改日志捕获类，不直接操作session_state =====
+class LogCapture:
+    def __init__(self, placeholder, logs_list):
+        self.placeholder = placeholder
+        self.logs_list = logs_list  # 直接传入列表引用
+        
+    def write(self, message):
+        if message.strip():
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_entry = f"[{timestamp}] {message.strip()}"
+            self.logs_list.append(log_entry)
+            # 只保留最近50条日志
+            if len(self.logs_list) > 50:
+                self.logs_list[:] = self.logs_list[-50:]
+            self.update_display()
+    
+    def flush(self):
+        pass
+    
+    def update_display(self):
+        log_html = '<div class="log-container">'
+        for log in self.logs_list[-30:]:  # 只显示最近30条
+            log_class = "log-line log-info"
+            if "❌" in log or "错误" in log or "失败" in log:
+                log_class = "log-line log-error"
+            elif "⚠️" in log or "警告" in log:
+                log_class = "log-line log-warning"
+            log_html += f'<div class="{log_class}">{log}</div>'
+        log_html += '</div>'
+        self.placeholder.markdown(log_html, unsafe_allow_html=True)
+
+# 创建日志捕获实例（使用 session_state.logs 的引用）
+log_capture = LogCapture(log_placeholder, st.session_state.logs)
 
 async def run_analysis(questions, show_browser, delay):
     """运行批量分析"""
     st.session_state.processing = True
-    st.session_state.logs = []  # 清空旧日志
     
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
