@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-带详细进度反馈显示
+带详细进度反馈显示 - 捕获所有 print 输出
 """
 
 import streamlit as st
@@ -13,6 +13,8 @@ import base64
 import subprocess
 from pathlib import Path
 import json
+from io import StringIO
+import contextlib
 
 # ===== 云端部署：安装playwright浏览器 =====
 def setup_playwright():
@@ -52,7 +54,6 @@ def setup_playwright():
                 print(f"✅ 浏览器验证成功: {browser_path}")
             else:
                 print(f"⚠️ 浏览器安装路径不符，查找实际位置...")
-                # 查找实际安装位置
                 find_result = subprocess.run(
                     ["find", str(cache_dir), "-name", "chrome", "-type", "f"],
                     capture_output=True,
@@ -92,7 +93,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 自定义CSS - 修改日志样式，与页面融合
+# 自定义CSS
 st.markdown("""
 <style>
     /* 旋转加载动画 */
@@ -142,7 +143,7 @@ st.markdown("""
         border: 1px solid #e9ecef;
         border-radius: 8px;
         padding: 15px;
-        height: 250px;
+        height: 300px;
         overflow-y: auto;
         font-family: 'Courier New', monospace;
         font-size: 13px;
@@ -269,57 +270,73 @@ with col2:
 progress_placeholder = st.empty()
 status_placeholder = st.empty()
 
-# 日志显示区域 - 去掉标题
+# 日志显示区域
+st.markdown("### 📋 运行日志")
 log_placeholder = st.empty()
 
-def add_log(message, level="info", details=None):
-    """添加详细日志到session state"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
+# ===== 日志捕获类 =====
+class LogCapture:
+    def __init__(self, placeholder, logs_list):
+        self.placeholder = placeholder
+        self.logs_list = logs_list
+        self.buffer = []
+        
+    def write(self, message):
+        if message.strip():
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            # 按行分割，处理多行消息
+            lines = message.strip().split('\n')
+            for line in lines:
+                if line.strip():
+                    log_entry = f"[{timestamp}] {line.strip()}"
+                    self.logs_list.append(log_entry)
+                    self.buffer.append(log_entry)
+            
+            # 只保留最近100条日志
+            if len(self.logs_list) > 100:
+                self.logs_list[:] = self.logs_list[-100:]
+            
+            self.update_display()
     
-    # 构建日志消息
-    if details:
-        log_entry = f"[{timestamp}] {message} - {details}"
-    else:
-        log_entry = f"[{timestamp}] {message}"
+    def flush(self):
+        pass
     
-    st.session_state.logs.append(log_entry)
-    
-    # 只保留最近100条日志
-    if len(st.session_state.logs) > 100:
-        st.session_state.logs = st.session_state.logs[-100:]
-    
-    # 更新日志显示
-    update_log_display()
+    def update_display(self):
+        log_html = '<div class="log-container">'
+        for log in self.logs_list[-50:]:  # 显示最近50条
+            # 提取时间戳和消息
+            if ']' in log:
+                time_part = log[:log.index(']')+1]
+                msg_part = log[log.index(']')+1:].strip()
+            else:
+                time_part = ""
+                msg_part = log
+            
+            # 根据消息内容确定样式
+            log_class = "log-line"
+            if "❌" in msg_part or "错误" in msg_part or "失败" in msg_part:
+                log_class += " log-error"
+            elif "⚠️" in msg_part or "警告" in msg_part:
+                log_class += " log-warning"
+            elif "✅" in msg_part or "成功" in msg_part:
+                log_class += " log-success"
+            elif "🔍" in msg_part or "分析" in msg_part:
+                log_class += " log-info"
+            elif "📚" in msg_part or "捕获" in msg_part:
+                log_class += " log-debug"
+            elif "⏳" in msg_part or "等待" in msg_part or "监控" in msg_part:
+                log_class += " log-warning"
+            elif "点击" in msg_part:
+                log_class += " log-info"
+            elif "分享链接" in msg_part:
+                log_class += " log-success"
+            
+            log_html += f'<div class="{log_class}"><span class="log-timestamp">{time_part}</span>{msg_part}</div>'
+        log_html += '</div>'
+        self.placeholder.markdown(log_html, unsafe_allow_html=True)
 
-def update_log_display():
-    """更新日志显示区域"""
-    log_html = '<div class="log-container">'
-    for log in st.session_state.logs[-50:]:  # 显示最近50条
-        # 提取时间戳和消息
-        if ']' in log:
-            time_part = log[:log.index(']')+1]
-            msg_part = log[log.index(']')+1:].strip()
-        else:
-            time_part = ""
-            msg_part = log
-        
-        log_class = "log-line"
-        if "❌" in msg_part or "错误" in msg_part or "失败" in msg_part:
-            log_class += " log-error"
-        elif "⚠️" in msg_part or "警告" in msg_part:
-            log_class += " log-warning"
-        elif "✅" in msg_part or "成功" in msg_part:
-            log_class += " log-success"
-        elif "🔍" in msg_part or "分析" in msg_part:
-            log_class += " log-info"
-        elif "📚" in msg_part or "捕获" in msg_part:
-            log_class += " log-debug"
-        elif "⏳" in msg_part or "等待" in msg_part:
-            log_class += " log-warning"
-        
-        log_html += f'<div class="{log_class}"><span class="log-timestamp">{time_part}</span>{msg_part}</div>'
-    log_html += '</div>'
-    log_placeholder.markdown(log_html, unsafe_allow_html=True)
+# 创建日志捕获实例
+log_capture = LogCapture(log_placeholder, st.session_state.logs)
 
 async def run_analysis(questions, show_browser, delay):
     """运行批量分析"""
@@ -328,32 +345,32 @@ async def run_analysis(questions, show_browser, delay):
     
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
+    # 重定向 stdout 和 stderr
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = log_capture
+    sys.stderr = log_capture
+    
     try:
-        add_log("🚀 正在启动浏览器...", "info")
+        log_capture.write("=" * 50)
+        log_capture.write("🚀 开始批量处理任务")
+        log_capture.write("=" * 50)
+        
+        # 更新状态显示
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🚀 正在启动浏览器...</span></div>',
             unsafe_allow_html=True
         )
-        await analyzer.start()
-        add_log("✅ 浏览器启动成功", "success")
         
-        add_log("🔐 正在检查登录状态...", "info")
+        await analyzer.start()
+        
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">🔐 正在检查登录状态...</span></div>',
             unsafe_allow_html=True
         )
         
-        # 详细登录过程
-        add_log("📝 访问 DeepSeek 主页...", "debug")
-        login_result = await analyzer.ensure_login()
-        
-        if login_result:
-            add_log("✅ 登录成功", "success")
-            add_log("🌐 检测界面语言...", "debug")
-            await analyzer.detect_language()
-            add_log(f"🌐 当前界面: {'英文' if analyzer.is_english else '中文'}", "info")
-        else:
-            add_log("❌ 登录失败", "error")
+        if not await analyzer.ensure_login():
+            log_capture.write("❌ 登录失败")
             status_placeholder.error("❌ 登录失败")
             return
         
@@ -361,50 +378,46 @@ async def run_analysis(questions, show_browser, delay):
             progress = (i + 1) / len(questions)
             progress_placeholder.progress(progress)
             
-            add_log(f"📌 开始处理第 {i+1} 个问题: {question[:100]}", "info")
+            log_capture.write("-" * 40)
+            log_capture.write(f"📌 开始处理第 {i+1}/{len(questions)} 个问题: {question}")
+            
             status_placeholder.markdown(
-                f'<div><span class="loading-spinner"></span><span class="status-text">⏳ 正在处理 [{i+1}/{len(questions)}]...</span></div>',
+                f'<div><span class="loading-spinner"></span><span class="status-text">⏳ 正在处理 [{i+1}/{len(questions)}]: {question[:50]}...</span></div>',
                 unsafe_allow_html=True
             )
             
-            # 详细处理过程
-            add_log("🔄 开启新对话...", "debug")
             result = await analyzer.analyze_question(question)
-            
-            # 记录详细结果
-            citation_count = result.get('citation_count', 0)
-            share_link = result.get('share_link', '')
-            
-            add_log(f"📚 捕获到 {citation_count} 条引用", "debug")
-            
-            if share_link:
-                add_log(f"✅ 获取到分享链接", "success")
-                add_log(f"🔗 链接: {share_link}", "debug")
-            else:
-                add_log("⚠️ 未获取到分享链接", "warning")
-                # 记录尝试过程
-                add_log("  ├─ 尝试DOM方式获取...", "debug")
-                add_log("  └─ DOM方式失败", "debug")
-            
             st.session_state.results.append(result)
             
+            log_capture.write(f"📊 处理完成:")
+            log_capture.write(f"  ├─ 引用数量: {result.get('citation_count', 0)} 条")
+            if result.get('share_link'):
+                log_capture.write(f"  ├─ 分享链接: {result['share_link']}")
+            else:
+                log_capture.write(f"  └─ 分享链接: 未获取到")
+            
             if i < len(questions) - 1:
-                add_log(f"⏳ 等待 {delay} 秒后处理下一个问题...", "debug")
+                log_capture.write(f"⏳ 等待 {delay} 秒后处理下一个问题...")
                 await asyncio.sleep(delay)
         
-        add_log(f"✅ 全部完成！共处理 {len(questions)} 个问题", "success")
+        log_capture.write("=" * 50)
+        log_capture.write(f"✅ 全部完成！共处理 {len(questions)} 个问题")
+        log_capture.write("=" * 50)
         status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
         
     except Exception as e:
-        add_log(f"❌ 出错: {str(e)}", "error")
+        log_capture.write(f"❌ 出错: {str(e)}")
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=log_capture)
         status_placeholder.error(f"❌ 出错: {str(e)}")
     finally:
-        add_log("👋 正在关闭浏览器...", "info")
+        log_capture.write("👋 正在关闭浏览器...")
         await analyzer.close()
-        add_log("✅ 浏览器已关闭", "success")
+        log_capture.write("✅ 浏览器已关闭")
         st.session_state.processing = False
+        # 恢复标准输出
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 # 执行分析
 if start_button and questions and not st.session_state.processing:
