@@ -37,7 +37,7 @@ class DeepSeekAnalyzer:
         self.citation_list = []  # 引用列表
         self.current_share_link = ""  # 当前问题的分享链接
         self.question_count = 0  # 记录问题序号
-        self.is_english = False  # 新增：判断是否为英文界面
+        self.is_english = False  # 判断是否为英文界面
         
     async def start(self):
         """启动浏览器并设置监听"""
@@ -278,7 +278,6 @@ class DeepSeekAnalyzer:
         print("❌ 登录超时")
         return False
     
-    # ===== 新增：检测界面语言 =====
     async def detect_language(self):
         """检测当前界面是中文还是英文"""
         try:
@@ -314,7 +313,6 @@ class DeepSeekAnalyzer:
             print(f"⚠️ 语言检测失败，默认中文: {e}")
             self.is_english = False
     
-    # ===== 打开新对话 =====
     async def new_conversation(self, question_index):
         """强制开启新对话"""
         print(f"\n🔄 准备第 {question_index+1} 个问题，开启新对话...")
@@ -441,7 +439,6 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击分享按钮出错: {e}")
             return False
 
-    # ===== 修改：添加中英文支持的创建分享按钮 =====
     async def click_create_share(self):
         """点击创建分享按钮 - 支持中英文"""
         try:
@@ -483,7 +480,6 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击创建分享出错: {e}")
             return False
 
-    # ===== 修改：添加中英文支持的创建并复制按钮 =====
     async def click_create_and_copy(self):
         """点击创建并复制按钮 - 支持中英文"""
         try:
@@ -532,32 +528,57 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击创建并复制出错: {e}")
             return False
 
-    # ===== 从DOM获取分享链接 =====
+    # ===== 修复：增强的DOM获取分享链接 =====
     async def get_share_link_from_dom(self):
-        """从DOM中直接获取分享链接"""
+        """从DOM中直接获取分享链接 - 增强版"""
         print("从页面获取分享链接...")
         
         try:
-            await asyncio.sleep(2)
+            # 等待分享弹窗加载
+            await asyncio.sleep(3)
             
+            # 方法1: 查找输入框（最准确）
             link_input = await self.page.query_selector('input[readonly], input[type="text"][value*="share"]')
-            
             if link_input:
                 share_link = await link_input.get_attribute('value')
                 if share_link and share_link.startswith('https://chat.deepseek.com/share/'):
                     print(f"✅ 从输入框获取到分享链接")
                     return share_link
             
+            # 方法2: 查找所有可能的分享链接元素
             share_link = await self.page.evaluate('''
                 () => {
-                    const elements = document.querySelectorAll('div, span, p, a');
-                    for (let el of elements) {
-                        const text = el.textContent || '';
-                        if (text.includes('chat.deepseek.com/share/')) {
+                    // 查找所有可能包含分享链接的元素
+                    const selectors = [
+                        'div[class*="link"]',
+                        'span[class*="link"]',
+                        'p[class*="link"]',
+                        'div[class*="share"]',
+                        'div[class*="dialog"]',
+                        'div[role="dialog"]'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            const text = el.textContent || '';
                             const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
-                            if (match) return match[0];
+                            if (match) {
+                                return match[0];
+                            }
                         }
                     }
+                    
+                    // 最后尝试全局搜索
+                    const allElements = document.querySelectorAll('div, span, p, a');
+                    for (const el of allElements) {
+                        const text = el.textContent || '';
+                        const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                        if (match) {
+                            return match[0];
+                        }
+                    }
+                    
                     return null;
                 }
             ''')
@@ -594,17 +615,15 @@ class DeepSeekAnalyzer:
             await asyncio.sleep(2)
             print(f"📚 已捕获 {len(self.citation_list)} 条引用")
             
+            # ===== 只使用DOM方式，禁用剪贴板 =====
             share_link = await self.get_share_link_from_dom()
             if share_link:
                 self.current_share_link = share_link
                 print(f"✅ 分享链接: {share_link}")
                 self.question_count += 1
             else:
-                print("⚠️ DOM方式获取失败，尝试剪贴板方式...")
-                share_link = await self.get_share_link()
-                if share_link:
-                    self.current_share_link = share_link
-                    self.question_count += 1
+                print("⚠️ DOM方式获取失败")
+                # 云端环境下剪贴板不可用，所以不再尝试
             
             return {
                 "question": question,
@@ -625,8 +644,9 @@ class DeepSeekAnalyzer:
                 "timestamp": datetime.now().isoformat()
             }
     
+    # ===== 保留剪贴板方式但默认禁用（可用于本地调试）=====
     async def get_share_link(self):
-        """获取分享链接 - 剪贴板方式"""
+        """获取分享链接 - 剪贴板方式（仅用于本地调试）"""
         print("获取分享链接（剪贴板方式）...")
         
         try:
