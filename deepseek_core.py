@@ -528,48 +528,36 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击创建并复制出错: {e}")
             return False
 
-    # ===== 修复：增强的DOM获取分享链接 =====
+    # ===== 修复：基于最新页面结构的DOM获取分享链接 =====
     async def get_share_link_from_dom(self):
-        """从DOM中直接获取分享链接 - 增强版"""
+        """从DOM中直接获取分享链接 - 基于最新页面结构"""
         print("从页面获取分享链接...")
         
         try:
-            # 等待分享弹窗加载
+            # 等待分享弹窗完全加载
             await asyncio.sleep(3)
             
-            # 方法1: 查找输入框（最准确）
-            link_input = await self.page.query_selector('input[readonly], input[type="text"][value*="share"]')
-            if link_input:
-                share_link = await link_input.get_attribute('value')
-                if share_link and share_link.startswith('https://chat.deepseek.com/share/'):
-                    print(f"✅ 从输入框获取到分享链接")
-                    return share_link
-            
-            # 方法2: 查找所有可能的分享链接元素
+            # 方法1: 直接查找分享弹窗中的文本
             share_link = await self.page.evaluate('''
                 () => {
-                    // 查找所有可能包含分享链接的元素
-                    const selectors = [
-                        'div[class*="link"]',
-                        'span[class*="link"]',
-                        'p[class*="link"]',
-                        'div[class*="share"]',
-                        'div[class*="dialog"]',
-                        'div[role="dialog"]'
-                    ];
+                    // 查找分享弹窗
+                    const dialog = document.querySelector('div.ds-modal-content.ds-elevated.ds-modal-content--dialog');
+                    if (!dialog) return null;
                     
-                    for (const selector of selectors) {
-                        const elements = document.querySelectorAll(selector);
-                        for (const el of elements) {
-                            const text = el.textContent || '';
-                            const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
-                            if (match) {
-                                return match[0];
-                            }
-                        }
-                    }
-                    
-                    // 最后尝试全局搜索
+                    // 在弹窗中查找分享链接
+                    const text = dialog.textContent || '';
+                    const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
+                    return match ? match[0] : null;
+                }
+            ''')
+            
+            if share_link:
+                print(f"✅ 从弹窗文本获取到分享链接")
+                return share_link
+            
+            # 方法2: 全局搜索
+            share_link = await self.page.evaluate('''
+                () => {
                     const allElements = document.querySelectorAll('div, span, p, a');
                     for (const el of allElements) {
                         const text = el.textContent || '';
@@ -578,13 +566,12 @@ class DeepSeekAnalyzer:
                             return match[0];
                         }
                     }
-                    
                     return null;
                 }
             ''')
             
             if share_link:
-                print(f"✅ 从页面文本获取到分享链接")
+                print(f"✅ 从全局文本获取到分享链接")
                 return share_link
             
             print("❌ 未找到分享链接")
@@ -615,7 +602,7 @@ class DeepSeekAnalyzer:
             await asyncio.sleep(2)
             print(f"📚 已捕获 {len(self.citation_list)} 条引用")
             
-            # ===== 只使用DOM方式，禁用剪贴板 =====
+            # 只使用DOM方式
             share_link = await self.get_share_link_from_dom()
             if share_link:
                 self.current_share_link = share_link
@@ -623,7 +610,6 @@ class DeepSeekAnalyzer:
                 self.question_count += 1
             else:
                 print("⚠️ DOM方式获取失败")
-                # 云端环境下剪贴板不可用，所以不再尝试
             
             return {
                 "question": question,
@@ -644,9 +630,8 @@ class DeepSeekAnalyzer:
                 "timestamp": datetime.now().isoformat()
             }
     
-    # ===== 保留剪贴板方式但默认禁用（可用于本地调试）=====
     async def get_share_link(self):
-        """获取分享链接 - 剪贴板方式（仅用于本地调试）"""
+        """获取分享链接 - 剪贴板方式（保留但默认不调用）"""
         print("获取分享链接（剪贴板方式）...")
         
         try:
