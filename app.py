@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-最终版 - 修正表格表头
+最终版 - 修复重置按钮
 """
 
 import streamlit as st
@@ -209,10 +209,18 @@ with col1:
 
 with col2:
     if st.button("🔄 重置", use_container_width=True, disabled=reset_disabled):
-        # 清除所有数据并刷新页面
+        # 如果有正在运行的任务，先停止
+        if st.session_state.processing:
+            st.session_state.processing = False
+            # 给任务一点时间停止
+            time.sleep(0.5)
+        
+        # 清除所有数据
         st.session_state.results = []
         st.session_state.logs = []
         st.session_state.reset_trigger += 1
+        
+        # 刷新页面
         st.rerun()
 
 # 进度显示
@@ -374,7 +382,7 @@ if st.session_state.results:
                     }
                 )
                 
-                # 收集扁平化数据用于CSV下载（增加序号、分享链接列）
+                # 收集扁平化数据用于CSV下载
                 for i, c in enumerate(citations):
                     all_citations_data.append({
                         "序号": c.get("cite_index", i+1),
@@ -388,7 +396,7 @@ if st.session_state.results:
             else:
                 st.info("📭 未找到引用来源")
     
-    # 下载扁平化数据（包含序号和分享链接列）
+    # 下载扁平化数据
     if all_citations_data:
         st.markdown("---")
         st.markdown("### 📥 导出引用数据")
@@ -400,7 +408,7 @@ if st.session_state.results:
         with st.expander("预览导出数据"):
             st.dataframe(df_download.head(10), use_container_width=True)
         
-        # CSV下载 - 表头：序号｜问题｜网站｜标题｜URL｜摘要｜分享链接
+        # CSV下载
         csv = df_download.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
         st.download_button(
