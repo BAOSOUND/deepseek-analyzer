@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-优化版 - 修复登录状态和重置按钮
+最终版 - 简化界面，优化功能
 """
 
 import streamlit as st
@@ -11,11 +11,8 @@ import sys
 import os
 import base64
 import subprocess
-import shutil
 from pathlib import Path
 import json
-from io import StringIO
-import contextlib
 
 # ===== 云端部署：安装playwright浏览器 =====
 def setup_playwright():
@@ -145,46 +142,8 @@ if 'logs' not in st.session_state:
     st.session_state.logs = []
 if 'reset_trigger' not in st.session_state:
     st.session_state.reset_trigger = 0
-if 'login_status' not in st.session_state:
-    st.session_state.login_status = False
 if 'log_expanded' not in st.session_state:
     st.session_state.log_expanded = False
-if 'analysis_task' not in st.session_state:
-    st.session_state.analysis_task = None
-
-# ===== 检查登录状态 =====
-def check_login_status():
-    """检查是否有真实的登录数据"""
-    browser_data_dir = Path("cookies/browser_data")
-    if not browser_data_dir.exists():
-        return False
-    
-    # 检查是否有Local Storage数据（真正的登录凭证）
-    local_storage = browser_data_dir / "Local Storage" / "leveldb"
-    if local_storage.exists() and any(local_storage.iterdir()):
-        # 检查是否有实际的登录token文件
-        for file in local_storage.iterdir():
-            if file.stat().st_size > 1000:  # 真正的登录数据通常大于1KB
-                return True
-    
-    # 检查是否有Cookies文件
-    cookies_file = browser_data_dir / "Cookies"
-    if cookies_file.exists() and cookies_file.stat().st_size > 500:  # 真正的cookies文件大于500B
-        return True
-    
-    return False
-
-# ===== 清除登录状态 =====
-def clear_login_status():
-    """清除保存的登录数据"""
-    browser_data_dir = Path("cookies/browser_data")
-    if browser_data_dir.exists():
-        shutil.rmtree(browser_data_dir)
-        st.session_state.login_status = False
-        st.rerun()
-
-# 更新登录状态
-st.session_state.login_status = check_login_status()
 
 # 侧边栏配置
 with st.sidebar:
@@ -197,22 +156,6 @@ with st.sidebar:
         st.markdown(html_code, unsafe_allow_html=True)
     else:
         st.markdown("### 🔗")
-    
-    st.markdown("---")
-    
-    # ===== 登录状态显示 =====
-    st.markdown("### 🔐 登录状态")
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.session_state.login_status:
-            st.success("✅ 已登录")
-        else:
-            st.warning("⚠️ 未登录")
-    
-    with col2:
-        if st.session_state.login_status:
-            if st.button("🗑️ 清除", use_container_width=True):
-                clear_login_status()
     
     st.markdown("---")
     
@@ -247,12 +190,12 @@ questions_text = st.text_area(
 
 questions = [q.strip() for q in questions_text.split('\n') if q.strip()]
 
-# ===== 修复按钮逻辑 =====
-# 开始按钮：永远可点，但运行时禁用
-start_disabled = st.session_state.processing  # 只在运行时禁用
+# ===== 按钮逻辑 =====
+# 开始按钮：只在运行时禁用
+start_disabled = st.session_state.processing
 
-# 重置按钮：永远可点
-reset_disabled = False
+# 重置按钮：只在运行时禁用
+reset_disabled = st.session_state.processing
 
 # 控制按钮
 col1, col2, col3 = st.columns([1, 1, 5])
@@ -261,21 +204,15 @@ with col1:
         "🚀 开始提取",
         type="primary",
         use_container_width=True,
-        disabled=start_disabled  # 只在运行时禁用
+        disabled=start_disabled
     )
 
 with col2:
     if st.button("🔄 重置", use_container_width=True, disabled=reset_disabled):
-        # 如果有正在运行的任务，强制停止
-        if st.session_state.processing:
-            st.session_state.processing = False
-        
-        # 清除所有数据
+        # 清除所有数据并刷新页面
         st.session_state.results = []
         st.session_state.logs = []
-        st.session_state.reset_trigger += 1  # 清空输入框
-        
-        # 重新运行以刷新界面
+        st.session_state.reset_trigger += 1
         st.rerun()
 
 # 进度显示
@@ -356,9 +293,6 @@ async def run_analysis(questions, show_browser, delay):
             status_placeholder.error("❌ 登录失败")
             return
         
-        # 登录成功后更新侧边栏状态
-        st.session_state.login_status = True
-        
         for i, question in enumerate(questions):
             # 检查是否被重置按钮中断
             if not st.session_state.processing:
@@ -406,55 +340,44 @@ if st.session_state.results:
     st.markdown("---")
     st.markdown("### 📊 提取结果")
     
+    # 准备扁平化的引用数据（每个引用一行）
     all_citations_data = []
     
-    for idx, result in enumerate(st.session_state.results):
-        with st.expander(f"📌 问题 {idx+1}: {result['question']}", expanded=True):
-            share_link = result.get("share_link", "")
-            if share_link:
-                st.markdown(f"""
-                <div class="share-link">
-                    🔗 <strong>分享链接：</strong><a href="{share_link}" target="_blank">{share_link}</a>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            citations = result.get("citations", [])
-            if citations:
-                st.markdown(f"**📚 引用来源 ({len(citations)} 条)**")
-                
-                display_df = pd.DataFrame()
-                display_df["序号"] = [c.get("cite_index", i+1) for i, c in enumerate(citations)]
-                display_df["网站"] = [c.get("site", "") for c in citations]
-                display_df["标题"] = [c.get("title", "") for c in citations]
-                display_df["URL"] = [c.get("url", "") for c in citations]
-                display_df["摘要"] = [c.get("snippet", "")[:100] + "..." if c.get("snippet") else "" for c in citations]
-                
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "URL": st.column_config.LinkColumn("URL")
-                    }
-                )
-                
-                for c in citations:
-                    all_citations_data.append({
-                        "问题": result['question'],
-                        "网站": c.get("site", ""),
-                        "标题": c.get("title", ""),
-                        "URL": c.get("url", ""),
-                        "摘要": c.get("snippet", "")
-                    })
+    for result in st.session_state.results:
+        question = result['question']
+        share_link = result.get('share_link', '')
+        citations = result.get('citations', [])
+        
+        for c in citations:
+            all_citations_data.append({
+                "问题": question,
+                "网站": c.get("site", ""),
+                "标题": c.get("title", ""),
+                "URL": c.get("url", ""),
+                "摘要": c.get("snippet", ""),
+                "分享链接": share_link
+            })
     
+    # 显示结果表格
     if all_citations_data:
+        st.markdown(f"**📚 共 {len(all_citations_data)} 条引用记录**")
+        
+        display_df = pd.DataFrame(all_citations_data)
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "URL": st.column_config.LinkColumn("URL"),
+                "分享链接": st.column_config.LinkColumn("分享链接")
+            }
+        )
+        
+        # 下载按钮
         st.markdown("---")
         st.markdown("### 📥 导出引用数据")
         
-        df_download = pd.DataFrame(all_citations_data)
-        st.info(f"📊 共 {len(df_download)} 条引用记录")
-        
-        csv = df_download.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        csv = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
         st.download_button(
             "📥 下载引用数据 (CSV)",
