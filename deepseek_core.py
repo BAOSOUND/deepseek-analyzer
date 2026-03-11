@@ -1,6 +1,6 @@
 """
 DeepSeek 核心自动化模块
-精简版 - 只输出关键用户信息
+精简版 - 直接尝试中英文，不依赖语言检测
 """
 
 import asyncio
@@ -37,8 +37,7 @@ class DeepSeekAnalyzer:
         self.citation_list = []  # 引用列表
         self.current_share_link = ""  # 当前问题的分享链接
         self.question_count = 0  # 记录问题序号
-        self.is_english = False  # 判断是否为英文界面
-        self.is_logged_in = False  # 登录状态
+        self.is_english = False  # 这个字段保留但不再用于决策
         
     async def start(self):
         """启动浏览器并设置监听"""
@@ -101,7 +100,6 @@ class DeepSeekAnalyzer:
                                     # 捕获引用列表
                                     if data.get('p') == 'response/fragments/-1/results':
                                         results = data.get('v', [])
-                                        print(f"📚 捕获到 {len(results)} 条引用数据")
                                         for result in results:
                                             citation = {
                                                 'title': result.get('title', ''),
@@ -137,7 +135,6 @@ class DeepSeekAnalyzer:
     
     async def ensure_login(self) -> bool:
         """确保已登录"""
-        print("正在检查登录状态...")
         await self.page.goto('https://chat.deepseek.com')
         await asyncio.sleep(1)
         
@@ -146,9 +143,6 @@ class DeepSeekAnalyzer:
             await self.page.wait_for_selector('textarea', timeout=2000)
             self.is_logged_in = True
             print("登录状态：已登录")
-            
-            # 检测界面语言
-            await self.detect_language()
             return True
         except:
             self.is_logged_in = False
@@ -247,49 +241,11 @@ class DeepSeekAnalyzer:
                 await self.page.wait_for_selector('textarea', timeout=1000)
                 self.is_logged_in = True
                 print("登录状态：已登录")
-                
-                # 检测界面语言
-                await self.detect_language()
                 return True
             except:
                 continue
         
         return False
-    
-    # ===== 语言检测 - 基于新对话按钮 =====
-    async def detect_language(self):
-        """检测界面语言 - 基于新对话按钮"""
-        try:
-            await asyncio.sleep(2)
-            
-            new_chat_text = await self.page.evaluate('''
-                () => {
-                    const buttons = document.querySelectorAll('button, [role="button"]');
-                    for (let btn of buttons) {
-                        const text = btn.textContent || '';
-                        if (text.includes('New chat')) {
-                            return 'en';
-                        }
-                        if (text.includes('新对话')) {
-                            return 'zh';
-                        }
-                    }
-                    return 'unknown';
-                }
-            ''')
-            
-            if new_chat_text == 'en':
-                self.is_english = True
-                print("当前界面：英文")
-            elif new_chat_text == 'zh':
-                self.is_english = False
-                print("当前界面：中文")
-            else:
-                self.is_english = True
-                print("当前界面：英文（默认）")
-                
-        except Exception as e:
-            self.is_english = True
     
     # ===== 打开新对话 =====
     async def new_conversation(self, question_index):
@@ -316,7 +272,6 @@ class DeepSeekAnalyzer:
             ''')
             
             if not result:
-                print("⚠️ 未找到新对话按钮，通过URL重置")
                 await self.page.goto('https://chat.deepseek.com')
                 await asyncio.sleep(2)
             
@@ -324,14 +279,11 @@ class DeepSeekAnalyzer:
             
             try:
                 await self.page.wait_for_selector('textarea', timeout=5000)
-                print("✅ 新对话已准备就绪")
             except:
-                print("⚠️ 输入框未出现，刷新页面")
                 await self.page.reload()
                 await asyncio.sleep(3)
                 
         except Exception as e:
-            print(f"⚠️ 开启新对话出错: {e}")
             await self.page.reload()
             await asyncio.sleep(3)
     
@@ -341,14 +293,12 @@ class DeepSeekAnalyzer:
         
         try:
             await self.page.wait_for_selector('button:has-text("停止生成")', timeout=10000)
-            print("✅ 检测到开始生成")
             await self.page.wait_for_selector('button:has-text("停止生成")', state='hidden', timeout=30000)
-            print("✅ 检测到生成完成")
             await asyncio.sleep(1)
             return True
             
         except Exception as e:
-            print("⚠️ 按钮检测超时，使用备用监控方式")
+            pass
         
         # 备用：监控内容变化
         last_length = 0
@@ -366,7 +316,6 @@ class DeepSeekAnalyzer:
                         if current_length == last_length:
                             stable_count += 1
                             if stable_count >= 3:
-                                print("✅ 内容稳定，生成完成")
                                 return True
                         else:
                             stable_count = 0
@@ -375,7 +324,6 @@ class DeepSeekAnalyzer:
                 pass
             await asyncio.sleep(1)
         
-        print("⚠️ 等待超时，继续执行")
         return True
     
     async def click_share_button(self):
@@ -385,7 +333,6 @@ class DeepSeekAnalyzer:
             result = await self.page.evaluate('''
                 () => {
                     const buttons = document.querySelectorAll('[role="button"]');
-                    console.log("找到按钮数量:", buttons.length);
                     for (let btn of buttons) {
                         const svg = btn.querySelector('svg');
                         if (svg) {
@@ -393,7 +340,6 @@ class DeepSeekAnalyzer:
                             if (path) {
                                 const d = path.getAttribute('d') || '';
                                 if (d.includes('M7.95889 1.52285')) {
-                                    console.log("找到分享按钮!");
                                     btn.click();
                                     return true;
                                 }
@@ -413,108 +359,101 @@ class DeepSeekAnalyzer:
             print(f"❌ 点击分享按钮出错: {e}")
             return False
 
+    # ===== 直接尝试中英文，不依赖语言检测 =====
     async def click_create_share(self):
-        """点击创建分享按钮 - 支持中英文"""
-        print(f"尝试点击创建分享按钮 (当前界面: {'英文' if self.is_english else '中文'})...")
-        try:
-            if self.is_english:
-                result = await self.page.evaluate('''
-                    () => {
-                        const buttons = document.querySelectorAll('button, [role="button"]');
-                        console.log("找到按钮数量:", buttons.length);
-                        for (let btn of buttons) {
-                            const text = btn.textContent || '';
-                            console.log("按钮文本:", text);
-                            if (text.includes('Create public link')) {
-                                console.log("找到创建分享按钮!");
-                                btn.click();
-                                return true;
-                            }
-                        }
-                        return false;
+        """点击创建分享按钮 - 直接尝试中英文"""
+        print("尝试点击创建分享按钮...")
+        
+        # 先尝试英文
+        result = await self.page.evaluate('''
+            () => {
+                const buttons = document.querySelectorAll('button, [role="button"]');
+                for (let btn of buttons) {
+                    const text = btn.textContent || '';
+                    if (text.includes('Create public link')) {
+                        btn.click();
+                        return true;
                     }
-                ''')
-            else:
-                result = await self.page.evaluate('''
-                    () => {
-                        const buttons = document.querySelectorAll('button, [role="button"]');
-                        console.log("找到按钮数量:", buttons.length);
-                        for (let btn of buttons) {
-                            const text = btn.textContent || '';
-                            console.log("按钮文本:", text);
-                            if (text.includes('创建分享')) {
-                                console.log("找到创建分享按钮!");
-                                btn.click();
-                                return true;
-                            }
-                        }
-                        return false;
+                }
+                return false;
+            }
+        ''')
+        
+        if result:
+            print("✅ 点击创建分享按钮成功 (英文)")
+            await asyncio.sleep(2)
+            return True
+        
+        # 如果英文失败，尝试中文
+        result = await self.page.evaluate('''
+            () => {
+                const buttons = document.querySelectorAll('button, [role="button"]');
+                for (let btn of buttons) {
+                    const text = btn.textContent || '';
+                    if (text.includes('创建分享')) {
+                        btn.click();
+                        return true;
                     }
-                ''')
-            
-            if result:
-                print("✅ 点击创建分享按钮成功")
-                await asyncio.sleep(2)
-                return True
-            print("❌ 未找到创建分享按钮")
-            return False
-        except Exception as e:
-            print(f"❌ 点击创建分享出错: {e}")
-            return False
+                }
+                return false;
+            }
+        ''')
+        
+        if result:
+            print("✅ 点击创建分享按钮成功 (中文)")
+            await asyncio.sleep(2)
+            return True
+        
+        print("❌ 未找到创建分享按钮 (中英文都试过)")
+        return False
 
     async def click_create_and_copy(self):
-        """点击创建并复制按钮 - 支持中英文"""
-        print(f"尝试点击创建并复制按钮 (当前界面: {'英文' if self.is_english else '中文'})...")
-        try:
-            await asyncio.sleep(2)
-            
-            if self.is_english:
-                copy_texts = ['Create and copy', 'Copy']
-                for text in copy_texts:
-                    result = await self.page.evaluate('''
-                        (target) => {
-                            const buttons = document.querySelectorAll('button, [role="button"]');
-                            console.log("查找文本:", target);
-                            for (let btn of buttons) {
-                                const btnText = btn.textContent || '';
-                                if (btnText.includes(target)) {
-                                    console.log("找到按钮:", btnText);
-                                    btn.click();
-                                    return true;
-                                }
-                            }
-                            return false;
+        """点击创建并复制按钮 - 直接尝试中英文"""
+        print("尝试点击创建并复制按钮...")
+        await asyncio.sleep(2)
+        
+        # 先尝试英文
+        copy_texts = ['Create and copy', 'Copy']
+        for text in copy_texts:
+            result = await self.page.evaluate('''
+                (target) => {
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (let btn of buttons) {
+                        const btnText = btn.textContent || '';
+                        if (btnText.includes(target)) {
+                            btn.click();
+                            return true;
                         }
-                    ''', text)
-                    
-                    if result:
-                        print(f"✅ 点击 '{text}' 成功")
-                        return True
-            else:
-                result = await self.page.evaluate('''
-                    () => {
-                        const buttons = document.querySelectorAll('button, [role="button"]');
-                        console.log("查找创建并复制按钮");
-                        for (let btn of buttons) {
-                            const text = btn.textContent || '';
-                            if (text.includes('创建并复制')) {
-                                console.log("找到按钮:", text);
-                                btn.click();
-                                return true;
-                            }
-                        }
-                        return false;
                     }
-                ''')
-                if result:
-                    print("✅ 点击 '创建并复制' 成功")
-                    return True
+                    return false;
+                }
+            ''', text)
             
-            print("❌ 未找到创建并复制按钮")
-            return False
-        except Exception as e:
-            print(f"❌ 点击创建并复制出错: {e}")
-            return False
+            if result:
+                print(f"✅ 点击 '{text}' 成功")
+                return True
+        
+        # 如果英文失败，尝试中文
+        result = await self.page.evaluate('''
+            () => {
+                const buttons = document.querySelectorAll('button, [role="button"]');
+                for (let btn of buttons) {
+                    const text = btn.textContent || '';
+                    if (text.includes('创建并复制')) {
+                        btn.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+        ''')
+        
+        if result:
+            print("✅ 点击 '创建并复制' 成功")
+            return True
+        
+        print("❌ 未找到创建并复制按钮 (中英文都试过)")
+        return False
 
     # ===== 获取分享链接 - 基于文本内容 =====
     async def get_share_link_from_dom(self):
@@ -665,67 +604,3 @@ class DeepSeekAnalyzer:
             await self.context.close()
         if self.playwright:
             await self.playwright.stop()
-
-    # ===== 修复版语言检测 =====
-    async def detect_language(self):
-        """检测界面语言 - 基于多个元素"""
-        try:
-            await asyncio.sleep(2)
-            
-            # 方法1: 检查创建分享按钮（最准确）
-            share_button = await self.page.evaluate('''
-                () => {
-                    const buttons = document.querySelectorAll('button, [role="button"]');
-                    for (let btn of buttons) {
-                        const text = btn.textContent || '';
-                        if (text.includes('创建分享')) {
-                            return 'zh';
-                        }
-                        if (text.includes('Create public link')) {
-                            return 'en';
-                        }
-                    }
-                    return 'unknown';
-                }
-            ''')
-            
-            if share_button == 'zh':
-                self.is_english = False
-                print("当前界面：中文 (通过创建分享按钮)")
-                return
-            elif share_button == 'en':
-                self.is_english = True
-                print("当前界面：英文 (通过创建分享按钮)")
-                return
-            
-            # 方法2: 检查新对话按钮
-            new_chat = await self.page.evaluate('''
-                () => {
-                    const buttons = document.querySelectorAll('button, [role="button"]');
-                    for (let btn of buttons) {
-                        const text = btn.textContent || '';
-                        if (text.includes('新对话')) {
-                            return 'zh';
-                        }
-                        if (text.includes('New chat')) {
-                            return 'en';
-                        }
-                    }
-                    return 'unknown';
-                }
-            ''')
-            
-            if new_chat == 'zh':
-                self.is_english = False
-                print("当前界面：中文 (通过新对话按钮)")
-            elif new_chat == 'en':
-                self.is_english = True
-                print("当前界面：英文 (通过新对话按钮)")
-            else:
-                # 默认中文
-                self.is_english = False
-                print("当前界面：中文 (默认)")
-                
-        except Exception as e:
-            print(f"⚠️ 语言检测失败，默认中文: {e}")
-            self.is_english = False
