@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-精简版 - 优化UI显示
+优化版 - 修复登录状态和重置按钮
 """
 
 import streamlit as st
@@ -149,22 +149,27 @@ if 'login_status' not in st.session_state:
     st.session_state.login_status = False
 if 'log_expanded' not in st.session_state:
     st.session_state.log_expanded = False
+if 'analysis_task' not in st.session_state:
+    st.session_state.analysis_task = None
 
 # ===== 检查登录状态 =====
 def check_login_status():
-    """检查是否有持久化的登录数据"""
+    """检查是否有真实的登录数据"""
     browser_data_dir = Path("cookies/browser_data")
     if not browser_data_dir.exists():
         return False
     
-    # 检查是否有Local Storage数据
+    # 检查是否有Local Storage数据（真正的登录凭证）
     local_storage = browser_data_dir / "Local Storage" / "leveldb"
     if local_storage.exists() and any(local_storage.iterdir()):
-        return True
+        # 检查是否有实际的登录token文件
+        for file in local_storage.iterdir():
+            if file.stat().st_size > 1000:  # 真正的登录数据通常大于1KB
+                return True
     
     # 检查是否有Cookies文件
     cookies_file = browser_data_dir / "Cookies"
-    if cookies_file.exists() and cookies_file.stat().st_size > 100:
+    if cookies_file.exists() and cookies_file.stat().st_size > 500:  # 真正的cookies文件大于500B
         return True
     
     return False
@@ -254,12 +259,18 @@ with col1:
     )
 
 with col2:
-    # 重置按钮：默认激活，只有processing时禁用
-    if st.button("🔄 重置", use_container_width=True, disabled=st.session_state.processing):
+    # 重置按钮：始终可用，点击后清除所有状态
+    if st.button("🔄 重置", use_container_width=True):
+        # 如果有正在运行的任务，强制停止
+        if st.session_state.processing:
+            st.session_state.processing = False
+        
+        # 清除所有数据
         st.session_state.results = []
         st.session_state.logs = []
-        st.session_state.processing = False
-        st.session_state.reset_trigger += 1
+        st.session_state.reset_trigger += 1  # 清空输入框
+        
+        # 重新运行以刷新界面
         st.rerun()
 
 # 进度显示
@@ -344,6 +355,11 @@ async def run_analysis(questions, show_browser, delay):
         st.session_state.login_status = True
         
         for i, question in enumerate(questions):
+            # 检查是否被重置按钮中断
+            if not st.session_state.processing:
+                log_capture.write("⏸️ 处理被中断")
+                break
+            
             progress = (i + 1) / len(questions)
             progress_placeholder.progress(progress)
             
@@ -359,9 +375,10 @@ async def run_analysis(questions, show_browser, delay):
             if i < len(questions) - 1:
                 await asyncio.sleep(delay)
         
-        log_capture.write(f"✅ 全部完成！共处理 {len(questions)} 个问题")
-        status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
-        progress_placeholder.empty()
+        if st.session_state.processing:  # 如果没被中断
+            log_capture.write(f"✅ 全部完成！共处理 {len(questions)} 个问题")
+            status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
+            progress_placeholder.empty()
         
     except Exception as e:
         log_capture.write(f"❌ 出错: {str(e)}")
