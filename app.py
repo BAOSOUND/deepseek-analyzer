@@ -54,7 +54,7 @@ from deepseek_core import DeepSeekAnalyzer
 
 # ✅ 必须是第一个 Streamlit 命令
 st.set_page_config(
-    page_title="DeepSeek 引用提取器",
+    page_title="DeepSeek 引用链接提取器",
     page_icon="🔗",
     layout="wide"
 )
@@ -134,7 +134,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🔗 DeepSeek 引用提取器")
+st.title("🔗 DeepSeek引用链接提取器")
 
 # 初始化session state
 if 'results' not in st.session_state:
@@ -220,7 +220,7 @@ with st.sidebar:
     st.markdown("### ⚙️ 配置")
     
     show_browser = st.checkbox(
-        "👁️ 显示浏览器",
+        "👁️ 显示浏览器（只限本地）",
         value=False
     )
     
@@ -232,7 +232,7 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.caption("正在提取时需要时间，宝宝请耐心等待哦！")
+    st.caption("喜欢就分享出去哦")
 
 # 主界面
 st.markdown("### 📝 输入问题")
@@ -247,20 +247,25 @@ questions_text = st.text_area(
 
 questions = [q.strip() for q in questions_text.split('\n') if q.strip()]
 
+# ===== 修复按钮逻辑 =====
+# 开始按钮：永远可点，但运行时禁用
+start_disabled = st.session_state.processing  # 只在运行时禁用
+
+# 重置按钮：永远可点
+reset_disabled = False
+
 # 控制按钮
 col1, col2, col3 = st.columns([1, 1, 5])
 with col1:
-    # 开始按钮：默认激活，只有processing时禁用
     start_button = st.button(
         "🚀 开始提取",
         type="primary",
         use_container_width=True,
-        disabled=st.session_state.processing or not questions
+        disabled=start_disabled  # 只在运行时禁用
     )
 
 with col2:
-    # 重置按钮：始终可用，点击后清除所有状态
-    if st.button("🔄 重置", use_container_width=True):
+    if st.button("🔄 重置", use_container_width=True, disabled=reset_disabled):
         # 如果有正在运行的任务，强制停止
         if st.session_state.processing:
             st.session_state.processing = False
@@ -388,9 +393,13 @@ async def run_analysis(questions, show_browser, delay):
         st.session_state.processing = False
         sys.stdout = old_stdout
 
-# 执行分析
-if start_button and questions and not st.session_state.processing:
-    asyncio.run(run_analysis(questions, show_browser, delay))
+# 执行分析 - 按钮点击判断
+if start_button and not st.session_state.processing:
+    # 即使 questions 为空，也允许点击，但给出提示
+    if not questions:
+        st.warning("请输入至少一个问题")
+    else:
+        asyncio.run(run_analysis(questions, show_browser, delay))
 
 # 显示结果
 if st.session_state.results:
