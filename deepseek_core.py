@@ -101,6 +101,7 @@ class DeepSeekAnalyzer:
                                     # 捕获引用列表
                                     if data.get('p') == 'response/fragments/-1/results':
                                         results = data.get('v', [])
+                                        print(f"📚 捕获到 {len(results)} 条引用数据")
                                         for result in results:
                                             citation = {
                                                 'title': result.get('title', ''),
@@ -136,6 +137,7 @@ class DeepSeekAnalyzer:
     
     async def ensure_login(self) -> bool:
         """确保已登录"""
+        print("正在检查登录状态...")
         await self.page.goto('https://chat.deepseek.com')
         await asyncio.sleep(1)
         
@@ -314,6 +316,7 @@ class DeepSeekAnalyzer:
             ''')
             
             if not result:
+                print("⚠️ 未找到新对话按钮，通过URL重置")
                 await self.page.goto('https://chat.deepseek.com')
                 await asyncio.sleep(2)
             
@@ -321,11 +324,14 @@ class DeepSeekAnalyzer:
             
             try:
                 await self.page.wait_for_selector('textarea', timeout=5000)
+                print("✅ 新对话已准备就绪")
             except:
+                print("⚠️ 输入框未出现，刷新页面")
                 await self.page.reload()
                 await asyncio.sleep(3)
                 
         except Exception as e:
+            print(f"⚠️ 开启新对话出错: {e}")
             await self.page.reload()
             await asyncio.sleep(3)
     
@@ -335,12 +341,14 @@ class DeepSeekAnalyzer:
         
         try:
             await self.page.wait_for_selector('button:has-text("停止生成")', timeout=10000)
+            print("✅ 检测到开始生成")
             await self.page.wait_for_selector('button:has-text("停止生成")', state='hidden', timeout=30000)
+            print("✅ 检测到生成完成")
             await asyncio.sleep(1)
             return True
             
         except Exception as e:
-            pass
+            print("⚠️ 按钮检测超时，使用备用监控方式")
         
         # 备用：监控内容变化
         last_length = 0
@@ -358,6 +366,7 @@ class DeepSeekAnalyzer:
                         if current_length == last_length:
                             stable_count += 1
                             if stable_count >= 3:
+                                print("✅ 内容稳定，生成完成")
                                 return True
                         else:
                             stable_count = 0
@@ -366,14 +375,17 @@ class DeepSeekAnalyzer:
                 pass
             await asyncio.sleep(1)
         
+        print("⚠️ 等待超时，继续执行")
         return True
     
     async def click_share_button(self):
         """点击分享按钮"""
+        print("尝试点击分享按钮...")
         try:
             result = await self.page.evaluate('''
                 () => {
                     const buttons = document.querySelectorAll('[role="button"]');
+                    console.log("找到按钮数量:", buttons.length);
                     for (let btn of buttons) {
                         const svg = btn.querySelector('svg');
                         if (svg) {
@@ -381,6 +393,7 @@ class DeepSeekAnalyzer:
                             if (path) {
                                 const d = path.getAttribute('d') || '';
                                 if (d.includes('M7.95889 1.52285')) {
+                                    console.log("找到分享按钮!");
                                     btn.click();
                                     return true;
                                 }
@@ -391,22 +404,29 @@ class DeepSeekAnalyzer:
                 }
             ''')
             if result:
+                print("✅ 点击分享按钮成功")
                 await asyncio.sleep(2)
                 return True
+            print("❌ 未找到分享按钮")
             return False
         except Exception as e:
+            print(f"❌ 点击分享按钮出错: {e}")
             return False
 
     async def click_create_share(self):
         """点击创建分享按钮 - 支持中英文"""
+        print(f"尝试点击创建分享按钮 (当前界面: {'英文' if self.is_english else '中文'})...")
         try:
             if self.is_english:
                 result = await self.page.evaluate('''
                     () => {
                         const buttons = document.querySelectorAll('button, [role="button"]');
+                        console.log("找到按钮数量:", buttons.length);
                         for (let btn of buttons) {
                             const text = btn.textContent || '';
+                            console.log("按钮文本:", text);
                             if (text.includes('Create public link')) {
+                                console.log("找到创建分享按钮!");
                                 btn.click();
                                 return true;
                             }
@@ -418,9 +438,12 @@ class DeepSeekAnalyzer:
                 result = await self.page.evaluate('''
                     () => {
                         const buttons = document.querySelectorAll('button, [role="button"]');
+                        console.log("找到按钮数量:", buttons.length);
                         for (let btn of buttons) {
                             const text = btn.textContent || '';
+                            console.log("按钮文本:", text);
                             if (text.includes('创建分享')) {
+                                console.log("找到创建分享按钮!");
                                 btn.click();
                                 return true;
                             }
@@ -430,14 +453,18 @@ class DeepSeekAnalyzer:
                 ''')
             
             if result:
+                print("✅ 点击创建分享按钮成功")
                 await asyncio.sleep(2)
                 return True
+            print("❌ 未找到创建分享按钮")
             return False
         except Exception as e:
+            print(f"❌ 点击创建分享出错: {e}")
             return False
 
     async def click_create_and_copy(self):
         """点击创建并复制按钮 - 支持中英文"""
+        print(f"尝试点击创建并复制按钮 (当前界面: {'英文' if self.is_english else '中文'})...")
         try:
             await asyncio.sleep(2)
             
@@ -447,9 +474,11 @@ class DeepSeekAnalyzer:
                     result = await self.page.evaluate('''
                         (target) => {
                             const buttons = document.querySelectorAll('button, [role="button"]');
+                            console.log("查找文本:", target);
                             for (let btn of buttons) {
                                 const btnText = btn.textContent || '';
                                 if (btnText.includes(target)) {
+                                    console.log("找到按钮:", btnText);
                                     btn.click();
                                     return true;
                                 }
@@ -459,14 +488,17 @@ class DeepSeekAnalyzer:
                     ''', text)
                     
                     if result:
+                        print(f"✅ 点击 '{text}' 成功")
                         return True
             else:
                 result = await self.page.evaluate('''
                     () => {
                         const buttons = document.querySelectorAll('button, [role="button"]');
+                        console.log("查找创建并复制按钮");
                         for (let btn of buttons) {
                             const text = btn.textContent || '';
                             if (text.includes('创建并复制')) {
+                                console.log("找到按钮:", text);
                                 btn.click();
                                 return true;
                             }
@@ -475,15 +507,19 @@ class DeepSeekAnalyzer:
                     }
                 ''')
                 if result:
+                    print("✅ 点击 '创建并复制' 成功")
                     return True
             
+            print("❌ 未找到创建并复制按钮")
             return False
         except Exception as e:
+            print(f"❌ 点击创建并复制出错: {e}")
             return False
 
     # ===== 获取分享链接 - 基于文本内容 =====
     async def get_share_link_from_dom(self):
         """从DOM中直接获取分享链接 - 基于文本内容"""
+        print("从页面获取分享链接...")
         try:
             await asyncio.sleep(3)
             
@@ -516,14 +552,15 @@ class DeepSeekAnalyzer:
             ''')
             
             if share_link:
-                print(f"获取到分享链接")
+                print(f"✅ 获取到分享链接")
                 print(f"分享链接: {share_link}")
-                print(f"分享链接获取成功")
                 return share_link
             
+            print("❌ 未找到分享链接")
             return None
             
         except Exception as e:
+            print(f"❌ 获取分享链接出错: {e}")
             return None
     
     async def analyze_question(self, question: str) -> Dict:
@@ -547,6 +584,7 @@ class DeepSeekAnalyzer:
             
             # 先点击按钮获取分享链接
             if not await self.click_share_button():
+                print("❌ 点击分享按钮失败")
                 return {
                     "question": question,
                     "citations": self.citation_list,
@@ -556,6 +594,7 @@ class DeepSeekAnalyzer:
                 }
             
             if not await self.click_create_share():
+                print("❌ 点击创建分享按钮失败")
                 return {
                     "question": question,
                     "citations": self.citation_list,
@@ -565,6 +604,7 @@ class DeepSeekAnalyzer:
                 }
             
             if not await self.click_create_and_copy():
+                print("❌ 点击创建并复制按钮失败")
                 return {
                     "question": question,
                     "citations": self.citation_list,
@@ -581,6 +621,8 @@ class DeepSeekAnalyzer:
             if share_link:
                 self.current_share_link = share_link
                 self.question_count += 1
+            else:
+                print("⚠️ 从DOM获取分享链接失败")
             
             print(f"已发现引用数量: {len(self.citation_list)} 条")
             
@@ -593,6 +635,7 @@ class DeepSeekAnalyzer:
             }
             
         except Exception as e:
+            print(f"❌ 分析出错: {e}")
             return {
                 "question": question,
                 "citations": [],
