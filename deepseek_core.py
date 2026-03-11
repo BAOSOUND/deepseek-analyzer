@@ -665,3 +665,67 @@ class DeepSeekAnalyzer:
             await self.context.close()
         if self.playwright:
             await self.playwright.stop()
+
+    # ===== 修复版语言检测 =====
+    async def detect_language(self):
+        """检测界面语言 - 基于多个元素"""
+        try:
+            await asyncio.sleep(2)
+            
+            # 方法1: 检查创建分享按钮（最准确）
+            share_button = await self.page.evaluate('''
+                () => {
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (let btn of buttons) {
+                        const text = btn.textContent || '';
+                        if (text.includes('创建分享')) {
+                            return 'zh';
+                        }
+                        if (text.includes('Create public link')) {
+                            return 'en';
+                        }
+                    }
+                    return 'unknown';
+                }
+            ''')
+            
+            if share_button == 'zh':
+                self.is_english = False
+                print("当前界面：中文 (通过创建分享按钮)")
+                return
+            elif share_button == 'en':
+                self.is_english = True
+                print("当前界面：英文 (通过创建分享按钮)")
+                return
+            
+            # 方法2: 检查新对话按钮
+            new_chat = await self.page.evaluate('''
+                () => {
+                    const buttons = document.querySelectorAll('button, [role="button"]');
+                    for (let btn of buttons) {
+                        const text = btn.textContent || '';
+                        if (text.includes('新对话')) {
+                            return 'zh';
+                        }
+                        if (text.includes('New chat')) {
+                            return 'en';
+                        }
+                    }
+                    return 'unknown';
+                }
+            ''')
+            
+            if new_chat == 'zh':
+                self.is_english = False
+                print("当前界面：中文 (通过新对话按钮)")
+            elif new_chat == 'en':
+                self.is_english = True
+                print("当前界面：英文 (通过新对话按钮)")
+            else:
+                # 默认中文
+                self.is_english = False
+                print("当前界面：中文 (默认)")
+                
+        except Exception as e:
+            print(f"⚠️ 语言检测失败，默认中文: {e}")
+            self.is_english = False
