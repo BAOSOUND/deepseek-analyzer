@@ -1,6 +1,6 @@
 """
 DeepSeek 核心自动化模块
-只捕获引用来源，生成分享链接
+精简版 - 只输出关键用户信息
 """
 
 import asyncio
@@ -38,10 +38,11 @@ class DeepSeekAnalyzer:
         self.current_share_link = ""  # 当前问题的分享链接
         self.question_count = 0  # 记录问题序号
         self.is_english = False  # 判断是否为英文界面
+        self.is_logged_in = False  # 登录状态
         
     async def start(self):
         """启动浏览器并设置监听"""
-        print("🚀 启动浏览器...")
+        print("启动模拟浏览器...")
         self.playwright = await async_playwright().start()
         
         # 启动参数
@@ -72,7 +73,6 @@ class DeepSeekAnalyzer:
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         self.page.set_default_timeout(self.timeout)
         
-        print("✅ 浏览器启动完成")
         return self
     
     async def setup_network_listener(self):
@@ -124,10 +124,7 @@ class DeepSeekAnalyzer:
             return False
         
         has_files = any(self.user_data_dir.iterdir())
-        if has_files:
-            print("✅ 发现已保存的浏览器数据")
-            return True
-        return False
+        return has_files
     
     async def load_cookies(self) -> bool:
         """persistent context 自动加载"""
@@ -135,32 +132,32 @@ class DeepSeekAnalyzer:
     
     async def save_cookies(self):
         """persistent context 自动保存"""
-        print("✅ 浏览器数据已自动保存到:", self.user_data_dir)
+        pass
     
     async def ensure_login(self) -> bool:
         """确保已登录"""
-        print("\n========== 开始登录流程 ==========")
-        
-        print("【1】访问主页...")
         await self.page.goto('https://chat.deepseek.com')
         await asyncio.sleep(1)
         
-        print("【2】检查登录状态...")
+        # 检查登录状态
         try:
             await self.page.wait_for_selector('textarea', timeout=2000)
-            print("✅ 已登录，无需再次登录")
+            self.is_logged_in = True
+            print("登录状态：已登录")
             
             # 检测界面语言
             await self.detect_language()
             return True
         except:
-            print("🔐 未登录，开始手动登录流程")
+            self.is_logged_in = False
+            print("登录状态：未登录")
+            print("🔐 需要手动登录...")
         
-        print("【3】跳转到登录页...")
+        # 跳转到登录页
         await self.page.goto('https://chat.deepseek.com/sign_in')
         await asyncio.sleep(2)
         
-        print("【4】检测登录界面类型...")
+        # 检测登录界面类型
         has_inputs = await self.page.evaluate('''
             () => {
                 const inputs = document.querySelectorAll('input[type="text"], input[type="password"]');
@@ -169,9 +166,9 @@ class DeepSeekAnalyzer:
         ''')
         
         if has_inputs:
-            print("✅ 检测到已经是密码登录界面，直接输入账号密码")
+            pass  # 已经是密码登录界面
         else:
-            print("🔄 检测到社交登录界面，需要切换到密码登录")
+            # 切换到密码登录
             try:
                 await self.page.evaluate('''
                     () => {
@@ -192,39 +189,28 @@ class DeepSeekAnalyzer:
                         if (buttons.length >= 2) buttons[1].click();
                     }
                 ''')
-                print("✅ 已点击密码登录按钮")
                 await asyncio.sleep(1)
             except Exception as e:
-                print(f"❌ 点击密码登录按钮失败: {e}")
                 return False
         
-        print("【5】输入账号密码...")
+        # 输入账号密码
         username = os.getenv("DEEPSEEK_USER")
         password = os.getenv("DEEPSEEK_PWD")
         
         if not username or not password:
-            print("❌ 请设置环境变量 DEEPSEEK_USER 和 DEEPSEEK_PWD")
             return False
         
         try:
             await asyncio.sleep(0.5)
             inputs = await self.page.query_selector_all('input')
-            print(f"找到 {len(inputs)} 个输入框")
             
             if len(inputs) >= 2:
                 await inputs[0].fill(username)
-                masked_username = username[:4] + "****" + username[-4:] if len(username) > 8 else "****"
-                print(f"✅ 账号已输入: {masked_username}")
                 await inputs[1].fill(password)
-                print("✅ 密码已输入")
-            else:
-                print("❌ 输入框不足")
-                return False
         except Exception as e:
-            print(f"❌ 输入账号密码失败: {e}")
             return False
         
-        print("【6】点击登录按钮...")
+        # 点击登录按钮
         try:
             login_texts = ['登录', '登陆', 'Sign in', 'Log in', 'Sign In', 'Log In']
             login_btn = None
@@ -237,53 +223,41 @@ class DeepSeekAnalyzer:
                     for text in login_texts:
                         if text in btn_text:
                             login_btn = btn
-                            print(f"✅ 找到登录按钮: '{btn_text}'")
                             break
                     if login_btn:
                         break
             
             if not login_btn:
                 login_btn = await self.page.query_selector('button[type="submit"]')
-                if login_btn:
-                    print("✅ 找到提交按钮")
             
             if not login_btn and len(buttons) > 0:
                 login_btn = buttons[-1]
-                print("✅ 使用最后一个按钮")
             
             if login_btn:
                 await login_btn.click()
-                print("✅ 已点击登录按钮")
-            else:
-                print("❌ 找不到登录按钮")
-                return False
         except Exception as e:
-            print(f"❌ 点击登录按钮失败: {e}")
             return False
         
-        print("【7】等待登录成功...")
+        # 等待登录成功
         for i in range(15):
             await asyncio.sleep(1)
             try:
                 await self.page.wait_for_selector('textarea', timeout=1000)
-                print("✅ 登录成功！")
+                self.is_logged_in = True
+                print("登录状态：已登录")
                 
                 # 检测界面语言
                 await self.detect_language()
                 return True
             except:
-                print(f"⏳ 等待登录... ({i+1}/15)")
                 continue
         
-        print("❌ 登录超时")
         return False
     
     # ===== 语言检测 - 基于新对话按钮 =====
     async def detect_language(self):
         """检测界面语言 - 基于新对话按钮"""
         try:
-            print("🌐 正在检测界面语言...")
-            
             await asyncio.sleep(2)
             
             new_chat_text = await self.page.evaluate('''
@@ -304,32 +278,27 @@ class DeepSeekAnalyzer:
             
             if new_chat_text == 'en':
                 self.is_english = True
-                print("🌐 检测到英文界面 (新对话按钮: New chat)")
+                print("当前界面：英文")
             elif new_chat_text == 'zh':
                 self.is_english = False
-                print("🌐 检测到中文界面 (新对话按钮: 新对话)")
+                print("当前界面：中文")
             else:
                 self.is_english = True
-                print("🌐 无法确定界面语言，默认英文")
-            
-            print(f"   → 当前语言设置: {'英文' if self.is_english else '中文'}")
+                print("当前界面：英文（默认）")
                 
         except Exception as e:
-            print(f"⚠️ 语言检测失败: {e}")
             self.is_english = True
     
     # ===== 打开新对话 =====
     async def new_conversation(self, question_index):
         """强制开启新对话"""
-        print(f"\n🔄 准备第 {question_index+1} 个问题，开启新对话...")
-        
         try:
             result = await self.page.evaluate('''
                 () => {
                     const newChatBtn = document.querySelector('div._5a8ac7a.a084f19e');
                     if (newChatBtn) {
                         newChatBtn.click();
-                        return 'button_found';
+                        return true;
                     }
                     
                     const buttons = document.querySelectorAll('button, [role="button"]');
@@ -337,17 +306,14 @@ class DeepSeekAnalyzer:
                         const text = btn.textContent || '';
                         if (text.includes('新对话') || text.includes('New chat')) {
                             btn.click();
-                            return 'text_found';
+                            return true;
                         }
                     }
-                    return 'not_found';
+                    return false;
                 }
             ''')
             
-            print(f"✅ 新对话操作: {result}")
-            
-            if result == 'not_found':
-                print("🔄 没找到新对话按钮，尝试通过URL重置")
+            if not result:
                 await self.page.goto('https://chat.deepseek.com')
                 await asyncio.sleep(2)
             
@@ -355,33 +321,28 @@ class DeepSeekAnalyzer:
             
             try:
                 await self.page.wait_for_selector('textarea', timeout=5000)
-                print("✅ 新对话已准备就绪")
             except:
-                print("⚠️ 输入框未出现，刷新页面")
                 await self.page.reload()
                 await asyncio.sleep(3)
                 
         except Exception as e:
-            print(f"⚠️ 开启新对话出错: {e}")
             await self.page.reload()
             await asyncio.sleep(3)
     
     async def wait_for_answer_complete(self):
         """等待AI回答完全生成"""
-        print("等待AI生成完整回答...")
+        print("等待答案内容生成...")
         
         try:
             await self.page.wait_for_selector('button:has-text("停止生成")', timeout=10000)
-            print("✅ 检测到开始生成")
             await self.page.wait_for_selector('button:has-text("停止生成")', state='hidden', timeout=30000)
-            print("✅ 检测到生成完成")
             await asyncio.sleep(1)
             return True
             
         except Exception as e:
-            print(f"⚠️ 按钮检测方式失败: {e}")
+            pass
         
-        print("监控内容变化...")
+        # 备用：监控内容变化
         last_length = 0
         stable_count = 0
         
@@ -394,24 +355,17 @@ class DeepSeekAnalyzer:
                     current_length = len(current_text.strip())
                     
                     if current_length > 0:
-                        print(f"⏳ 内容长度: {current_length} 字符")
-                        
                         if current_length == last_length:
                             stable_count += 1
                             if stable_count >= 3:
-                                print("✅ 内容稳定，生成完成")
-                                await asyncio.sleep(1)
                                 return True
                         else:
                             stable_count = 0
-                        
                         last_length = current_length
             except Exception as e:
                 pass
-            
             await asyncio.sleep(1)
         
-        print("⚠️ 等待超时，继续执行")
         return True
     
     async def click_share_button(self):
@@ -437,12 +391,10 @@ class DeepSeekAnalyzer:
                 }
             ''')
             if result:
-                print("✅ 点击分享按钮")
                 await asyncio.sleep(2)
                 return True
             return False
         except Exception as e:
-            print(f"❌ 点击分享按钮出错: {e}")
             return False
 
     async def click_create_share(self):
@@ -462,7 +414,6 @@ class DeepSeekAnalyzer:
                         return false;
                     }
                 ''')
-                print(f"🔍 英文界面，查找 'Create public link' 按钮...")
             else:
                 result = await self.page.evaluate('''
                     () => {
@@ -477,16 +428,12 @@ class DeepSeekAnalyzer:
                         return false;
                     }
                 ''')
-                print(f"🔍 中文界面，查找 '创建分享' 按钮...")
             
             if result:
-                print(f"✅ 点击创建分享按钮成功")
                 await asyncio.sleep(2)
                 return True
-            print("❌ 未找到创建分享按钮")
             return False
         except Exception as e:
-            print(f"❌ 点击创建分享出错: {e}")
             return False
 
     async def click_create_and_copy(self):
@@ -512,7 +459,6 @@ class DeepSeekAnalyzer:
                     ''', text)
                     
                     if result:
-                        print(f"✅ 点击 '{text}'")
                         return True
             else:
                 result = await self.page.evaluate('''
@@ -529,33 +475,24 @@ class DeepSeekAnalyzer:
                     }
                 ''')
                 if result:
-                    print("✅ 点击 '创建并复制'")
                     return True
             
             return False
         except Exception as e:
-            print(f"❌ 点击创建并复制出错: {e}")
             return False
 
-    # ===== 修复版DOM获取分享链接 - 基于文本内容 =====
+    # ===== 获取分享链接 - 基于文本内容 =====
     async def get_share_link_from_dom(self):
         """从DOM中直接获取分享链接 - 基于文本内容"""
-        print("从页面获取分享链接...")
-        
         try:
-            # 等待弹窗加载
             await asyncio.sleep(3)
             
-            # 基于文本内容查找包含分享链接的span
             share_link = await self.page.evaluate('''
                 () => {
-                    // 查找所有span元素
                     const spans = document.querySelectorAll('span');
                     for (const span of spans) {
                         const text = span.textContent || '';
-                        // 查找包含分享链接的文本
                         if (text.includes('chat.deepseek.com/share/')) {
-                            // 提取纯链接（以防有额外文字）
                             const match = text.match(/https:\\/\\/chat\\.deepseek\\.com\\/share\\/[a-zA-Z0-9_]+/);
                             if (match) {
                                 return match[0];
@@ -563,7 +500,6 @@ class DeepSeekAnalyzer:
                         }
                     }
                     
-                    // 备用：查找所有div
                     const divs = document.querySelectorAll('div');
                     for (const div of divs) {
                         const text = div.textContent || '';
@@ -580,19 +516,19 @@ class DeepSeekAnalyzer:
             ''')
             
             if share_link:
-                print(f"✅ 从弹窗获取到分享链接: {share_link}")
+                print(f"获取到分享链接")
+                print(f"分享链接: {share_link}")
+                print(f"分享链接获取成功")
                 return share_link
             
-            print("❌ 未找到分享链接")
             return None
             
         except Exception as e:
-            print(f"❌ 获取分享链接出错: {e}")
             return None
     
     async def analyze_question(self, question: str) -> Dict:
         """分析单个问题，返回引用列表和分享链接"""
-        print(f"\n🔍 分析: {question}")
+        print(f"\n开始处理第 {self.question_count+1} 个问题: {question}")
         
         self.citation_list = []
         self.current_share_link = ""
@@ -603,19 +539,14 @@ class DeepSeekAnalyzer:
             input_box = await self.page.wait_for_selector('textarea')
             await input_box.fill(question)
             await input_box.press('Enter')
-            print("📤 问题已发送")
             
             await self.wait_for_answer_complete()
-            print("✅ 回答完全生成")
+            print("回答完全生成")
             
             await asyncio.sleep(2)
-            print(f"📚 已捕获 {len(self.citation_list)} 条引用")
             
             # 先点击按钮获取分享链接
-            print("🔄 开始获取分享链接...")
-            
             if not await self.click_share_button():
-                print("❌ 点击分享按钮失败")
                 return {
                     "question": question,
                     "citations": self.citation_list,
@@ -625,7 +556,6 @@ class DeepSeekAnalyzer:
                 }
             
             if not await self.click_create_share():
-                print("❌ 点击创建分享按钮失败")
                 return {
                     "question": question,
                     "citations": self.citation_list,
@@ -635,7 +565,6 @@ class DeepSeekAnalyzer:
                 }
             
             if not await self.click_create_and_copy():
-                print("❌ 点击创建并复制按钮失败")
                 return {
                     "question": question,
                     "citations": self.citation_list,
@@ -651,10 +580,9 @@ class DeepSeekAnalyzer:
             
             if share_link:
                 self.current_share_link = share_link
-                print(f"✅ 分享链接: {share_link}")
                 self.question_count += 1
-            else:
-                print("⚠️ DOM方式获取失败")
+            
+            print(f"已发现引用数量: {len(self.citation_list)} 条")
             
             return {
                 "question": question,
@@ -665,7 +593,6 @@ class DeepSeekAnalyzer:
             }
             
         except Exception as e:
-            print(f"❌ 分析出错: {e}")
             return {
                 "question": question,
                 "citations": [],
@@ -675,52 +602,18 @@ class DeepSeekAnalyzer:
                 "timestamp": datetime.now().isoformat()
             }
     
-    async def get_share_link(self):
-        """获取分享链接 - 剪贴板方式（保留）"""
-        print("获取分享链接（剪贴板方式）...")
-        
-        try:
-            if not await self.click_share_button():
-                return None
-            await asyncio.sleep(2)
-            
-            if not await self.click_create_share():
-                return None
-            await asyncio.sleep(3)
-            
-            if not await self.click_create_and_copy():
-                return None
-            await asyncio.sleep(2)
-            
-            for attempt in range(3):
-                try:
-                    text = await self.page.evaluate('async () => await navigator.clipboard.readText()')
-                    if text and isinstance(text, str) and text.startswith('https://chat.deepseek.com/share/'):
-                        print(f"✅ 获取到分享链接")
-                        return text
-                except Exception as e:
-                    print(f"⏳ 等待剪贴板... ({attempt+1}/3)")
-                await asyncio.sleep(1)
-            
-            return None
-        except Exception as e:
-            print(f"❌ 获取链接过程出错: {e}")
-            return None
-    
     async def batch_analyze(self, questions: List[str], delay: int = 2) -> List[Dict]:
         """批量分析问题"""
         results = []
         
         for i, q in enumerate(questions):
-            print(f"\n{'='*50}")
-            print(f"进度 [{i+1}/{len(questions)}]")
-            
             result = await self.analyze_question(q)
             results.append(result)
             
             if i < len(questions) - 1:
                 await asyncio.sleep(delay)
         
+        print(f"\n✅ 全部完成！共处理 {len(questions)} 个问题")
         return results
     
     async def close(self):
@@ -729,4 +622,3 @@ class DeepSeekAnalyzer:
             await self.context.close()
         if self.playwright:
             await self.playwright.stop()
-        print("👋 浏览器已关闭")

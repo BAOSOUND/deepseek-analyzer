@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-带详细进度反馈显示 - 修复重置按钮
+精简版 - 只显示关键用户信息
 """
 
 import streamlit as st
@@ -20,65 +20,29 @@ import contextlib
 def setup_playwright():
     """确保playwright浏览器已安装"""
     try:
-        print("📦 正在检查playwright浏览器...")
-        
         # 设置 Playwright 浏览器安装路径到用户目录
         cache_dir = Path.home() / ".cache" / "ms-playwright"
         cache_dir.mkdir(parents=True, exist_ok=True)
         os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(cache_dir)
         
-        print(f"📁 浏览器安装路径: {cache_dir}")
-        
         # 检查浏览器是否已存在
         browser_path = cache_dir / "chromium-1091" / "chrome-linux" / "chrome"
         if browser_path.exists():
-            print(f"✅ 浏览器已存在: {browser_path}")
             return True
         
         # 安装 Chromium
-        print("📥 正在安装 Chromium 浏览器...")
-        result = subprocess.run(
+        subprocess.run(
             ["playwright", "install", "chromium"],
-            capture_output=True,
-            text=True,
+            check=True,
             timeout=300
         )
-        
-        if result.returncode == 0:
-            print("✅ playwright浏览器安装成功")
-            if result.stdout:
-                print(result.stdout)
-                
-            # 验证安装
-            if browser_path.exists():
-                print(f"✅ 浏览器验证成功: {browser_path}")
-            else:
-                print(f"⚠️ 浏览器安装路径不符，查找实际位置...")
-                find_result = subprocess.run(
-                    ["find", str(cache_dir), "-name", "chrome", "-type", "f"],
-                    capture_output=True,
-                    text=True
-                )
-                if find_result.stdout:
-                    print(f"🔍 找到浏览器: {find_result.stdout}")
-        else:
-            print(f"⚠️ 安装失败: {result.stderr}")
-            print("🔄 尝试安装所有浏览器...")
-            subprocess.run(["playwright", "install"], check=True, timeout=500)
             
-    except subprocess.TimeoutExpired:
-        print("⏱️ 安装超时，但可能已部分完成")
     except Exception as e:
-        print(f"⚠️ playwright安装警告: {e}")
-        import traceback
-        traceback.print_exc()
+        pass
 
 # 在Linux环境下执行（Streamlit Cloud）
 if sys.platform.startswith('linux'):
-    print("🐧 Linux环境检测，开始安装playwright浏览器...")
     setup_playwright()
-else:
-    print(f"🖥️ Windows环境，跳过playwright安装")
 # ======================================
 
 # Windows平台修复
@@ -87,6 +51,7 @@ if sys.platform == "win32":
 
 from deepseek_core import DeepSeekAnalyzer
 
+# ✅ 必须是第一个 Streamlit 命令
 st.set_page_config(
     page_title="DeepSeek 引用提取器",
     page_icon="🔗",
@@ -137,7 +102,7 @@ st.markdown("""
         width: 100%;
     }
     
-    /* 日志区域样式 - 与页面融合 */
+    /* 日志区域样式 - 简洁版 */
     .log-container {
         background-color: #f8f9fa;
         border: 1px solid #e9ecef;
@@ -165,22 +130,6 @@ st.markdown("""
         font-weight: normal;
         margin-right: 8px;
     }
-    .log-info {
-        color: #0d6efd;
-    }
-    .log-warning {
-        color: #fd7e14;
-    }
-    .log-error {
-        color: #dc3545;
-        font-weight: bold;
-    }
-    .log-success {
-        color: #198754;
-    }
-    .log-debug {
-        color: #6f42c1;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -193,31 +142,8 @@ if 'processing' not in st.session_state:
     st.session_state.processing = False
 if 'logs' not in st.session_state:
     st.session_state.logs = []
-if 'login_status' not in st.session_state:
-    st.session_state.login_status = "unknown"
 if 'reset_trigger' not in st.session_state:
     st.session_state.reset_trigger = 0
-
-# ===== 更准确的登录状态检测 =====
-def check_login_status():
-    """检查登录状态 - 基于persistent context"""
-    browser_data_dir = Path("cookies/browser_data")
-    
-    # 检查Local Storage文件
-    local_storage_file = browser_data_dir / "Local Storage" / "leveldb"
-    cookies_file = browser_data_dir / "Cookies"
-    
-    has_storage = False
-    if browser_data_dir.exists():
-        if local_storage_file.exists() and any(local_storage_file.iterdir()):
-            has_storage = True
-        if cookies_file.exists() and cookies_file.stat().st_size > 100:
-            has_storage = True
-    
-    return has_storage
-
-# 更新session state中的登录状态
-st.session_state.login_status = check_login_status()
 
 # 侧边栏配置
 with st.sidebar:
@@ -230,7 +156,6 @@ with st.sidebar:
         st.markdown(html_code, unsafe_allow_html=True)
     else:
         st.markdown("### 🔗")
-    # ==================
     
     st.markdown("---")
     
@@ -238,8 +163,7 @@ with st.sidebar:
     
     show_browser = st.checkbox(
         "👁️ 显示浏览器",
-        value=False,
-        help="开启后可以看到浏览器操作过程"
+        value=False
     )
     
     delay = st.number_input(
@@ -250,15 +174,6 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    
-    # ===== 登录状态显示 =====
-    if st.session_state.login_status:
-        st.success("✅ 已保存登录状态 (下次运行自动登录)")
-        st.caption("📌 浏览器数据已持久化")
-    else:
-        st.warning("⚠️ 首次运行需要登录 (登录后会自动保存状态)")
-    
-    st.markdown("---")
     st.caption("正在提取时需要时间，宝宝请耐心等待哦！")
 
 # 主界面
@@ -267,8 +182,8 @@ st.markdown("### 📝 输入问题")
 questions_text = st.text_area(
     "问题列表",
     height=150,
-    placeholder="每行一个问题，例如：\nPython异步编程的优点\n机器学习入门方法\n2024年AI发展趋势",
-    key=f"questions_input_{st.session_state.reset_trigger}",  # 使用reset_trigger刷新key
+    placeholder="每行一个问题",
+    key=f"questions_input_{st.session_state.reset_trigger}",
     label_visibility="collapsed"
 )
 
@@ -285,13 +200,10 @@ with col1:
     )
 
 with col2:
-    # ===== 修复：重置按钮 =====
     if st.button("🔄 重置", use_container_width=True, disabled=st.session_state.processing):
-        # 清空所有状态
         st.session_state.results = []
         st.session_state.logs = []
         st.session_state.processing = False
-        # 增加reset_trigger强制刷新输入框
         st.session_state.reset_trigger += 1
         st.rerun()
 
@@ -303,12 +215,11 @@ status_placeholder = st.empty()
 st.markdown("### 📋 运行日志")
 log_placeholder = st.empty()
 
-# ===== 日志捕获类 =====
+# ===== 精简版日志捕获类 =====
 class LogCapture:
     def __init__(self, placeholder, logs_list):
         self.placeholder = placeholder
         self.logs_list = logs_list
-        self.buffer = []
         
     def write(self, message):
         if message.strip():
@@ -318,10 +229,9 @@ class LogCapture:
                 if line.strip():
                     log_entry = f"[{timestamp}] {line.strip()}"
                     self.logs_list.append(log_entry)
-                    self.buffer.append(log_entry)
             
-            if len(self.logs_list) > 100:
-                self.logs_list[:] = self.logs_list[-100:]
+            if len(self.logs_list) > 50:
+                self.logs_list[:] = self.logs_list[-50:]
             
             self.update_display()
     
@@ -330,7 +240,7 @@ class LogCapture:
     
     def update_display(self):
         log_html = '<div class="log-container">'
-        for log in self.logs_list[-50:]:
+        for log in self.logs_list[-30:]:
             if ']' in log:
                 time_part = log[:log.index(']')+1]
                 msg_part = log[log.index(']')+1:].strip()
@@ -338,25 +248,7 @@ class LogCapture:
                 time_part = ""
                 msg_part = log
             
-            log_class = "log-line"
-            if "❌" in msg_part or "错误" in msg_part or "失败" in msg_part:
-                log_class += " log-error"
-            elif "⚠️" in msg_part or "警告" in msg_part:
-                log_class += " log-warning"
-            elif "✅" in msg_part or "成功" in msg_part:
-                log_class += " log-success"
-            elif "🔍" in msg_part or "分析" in msg_part:
-                log_class += " log-info"
-            elif "📚" in msg_part or "捕获" in msg_part:
-                log_class += " log-debug"
-            elif "⏳" in msg_part or "等待" in msg_part or "监控" in msg_part:
-                log_class += " log-warning"
-            elif "点击" in msg_part:
-                log_class += " log-info"
-            elif "分享链接" in msg_part:
-                log_class += " log-success"
-            
-            log_html += f'<div class="{log_class}"><span class="log-timestamp">{time_part}</span>{msg_part}</div>'
+            log_html += f'<div class="log-line"><span class="log-timestamp">{time_part}</span>{msg_part}</div>'
         log_html += '</div>'
         self.placeholder.markdown(log_html, unsafe_allow_html=True)
 
@@ -370,26 +262,22 @@ async def run_analysis(questions, show_browser, delay):
     
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
-    # 重定向 stdout 和 stderr
+    # 重定向 stdout
     old_stdout = sys.stdout
-    old_stderr = sys.stderr
     sys.stdout = log_capture
-    sys.stderr = log_capture
     
     try:
-        log_capture.write("=" * 50)
-        log_capture.write("🚀 开始批量处理任务")
-        log_capture.write("=" * 50)
+        log_capture.write("开始批量处理任务")
         
         status_placeholder.markdown(
-            '<div><span class="loading-spinner"></span><span class="status-text">🚀 正在启动浏览器...</span></div>',
+            '<div><span class="loading-spinner"></span><span class="status-text">启动模拟浏览器...</span></div>',
             unsafe_allow_html=True
         )
         
         await analyzer.start()
         
         status_placeholder.markdown(
-            '<div><span class="loading-spinner"></span><span class="status-text">🔐 正在检查登录状态...</span></div>',
+            '<div><span class="loading-spinner"></span><span class="status-text">正在检查登录状态...</span></div>',
             unsafe_allow_html=True
         )
         
@@ -398,52 +286,26 @@ async def run_analysis(questions, show_browser, delay):
             status_placeholder.error("❌ 登录失败")
             return
         
-        # 登录成功后更新登录状态
-        st.session_state.login_status = True
-        
         for i, question in enumerate(questions):
             progress = (i + 1) / len(questions)
             progress_placeholder.progress(progress)
             
-            log_capture.write("-" * 40)
-            log_capture.write(f"📌 开始处理第 {i+1}/{len(questions)} 个问题: {question}")
-            
-            status_placeholder.markdown(
-                f'<div><span class="loading-spinner"></span><span class="status-text">⏳ 正在处理 [{i+1}/{len(questions)}]: {question[:50]}...</span></div>',
-                unsafe_allow_html=True
-            )
-            
             result = await analyzer.analyze_question(question)
             st.session_state.results.append(result)
             
-            log_capture.write(f"📊 处理完成:")
-            log_capture.write(f"  ├─ 引用数量: {result.get('citation_count', 0)} 条")
-            if result.get('share_link'):
-                log_capture.write(f"  └─ 分享链接: {result['share_link']}")
-            else:
-                log_capture.write(f"  └─ 分享链接: 未获取到")
-            
             if i < len(questions) - 1:
-                log_capture.write(f"⏳ 等待 {delay} 秒后处理下一个问题...")
                 await asyncio.sleep(delay)
         
-        log_capture.write("=" * 50)
         log_capture.write(f"✅ 全部完成！共处理 {len(questions)} 个问题")
-        log_capture.write("=" * 50)
         status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
         
     except Exception as e:
         log_capture.write(f"❌ 出错: {str(e)}")
-        import traceback
-        traceback.print_exc(file=log_capture)
         status_placeholder.error(f"❌ 出错: {str(e)}")
     finally:
-        log_capture.write("👋 正在关闭浏览器...")
         await analyzer.close()
-        log_capture.write("✅ 浏览器已关闭")
         st.session_state.processing = False
         sys.stdout = old_stdout
-        sys.stderr = old_stderr
 
 # 执行分析
 if start_button and questions and not st.session_state.processing:
@@ -465,8 +327,6 @@ if st.session_state.results:
                     🔗 <strong>分享链接：</strong><a href="{share_link}" target="_blank">{share_link}</a>
                 </div>
                 """, unsafe_allow_html=True)
-            else:
-                st.warning("⚠️ 未生成分享链接")
             
             citations = result.get("citations", [])
             if citations:
@@ -496,8 +356,6 @@ if st.session_state.results:
                         "URL": c.get("url", ""),
                         "摘要": c.get("snippet", "")
                     })
-            else:
-                st.info("📭 未找到引用来源")
     
     if all_citations_data:
         st.markdown("---")
@@ -505,9 +363,6 @@ if st.session_state.results:
         
         df_download = pd.DataFrame(all_citations_data)
         st.info(f"📊 共 {len(df_download)} 条引用记录")
-        
-        with st.expander("预览导出数据"):
-            st.dataframe(df_download.head(10), use_container_width=True)
         
         csv = df_download.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
