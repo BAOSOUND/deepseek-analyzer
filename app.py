@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-最终版 - 修复重置按钮
+最终版 - 移除重置按钮，修复预览数据
 """
 
 import streamlit as st
@@ -194,34 +194,18 @@ questions = [q.strip() for q in questions_text.split('\n') if q.strip()]
 # 开始按钮：只在运行时禁用
 start_disabled = st.session_state.processing
 
-# 重置按钮：只在运行时禁用
-reset_disabled = st.session_state.processing
-
-# 控制按钮
+# 控制按钮 - 移除重置按钮
 col1, col2, col3 = st.columns([1, 1, 5])
 with col1:
     start_button = st.button(
-        "🚀 开始提取",
+        "开始提取",
         type="primary",
         use_container_width=True,
-        disabled=start_disabled
+        disabled=start_disabled  # 跑数据时禁用
     )
 
 with col2:
-    if st.button("🔄 重置", use_container_width=True, disabled=reset_disabled):
-        # 如果有正在运行的任务，先停止
-        if st.session_state.processing:
-            st.session_state.processing = False
-            # 给任务一点时间停止
-            time.sleep(0.5)
-        
-        # 清除所有数据
-        st.session_state.results = []
-        st.session_state.logs = []
-        st.session_state.reset_trigger += 1
-        
-        # 刷新页面
-        st.rerun()
+    st.empty()  # 占位，保持布局
 
 # 进度显示
 progress_placeholder = st.empty()
@@ -302,7 +286,7 @@ async def run_analysis(questions, show_browser, delay):
             return
         
         for i, question in enumerate(questions):
-            # 检查是否被重置按钮中断
+            # 检查是否被中断
             if not st.session_state.processing:
                 log_capture.write("⏸️ 处理被中断")
                 break
@@ -404,11 +388,16 @@ if st.session_state.results:
         df_download = pd.DataFrame(all_citations_data)
         st.info(f"📊 共 {len(df_download)} 条引用记录")
         
-        # 预览数据
+        # 预览数据 - 显示所有数据，表头为 序号｜网站｜标题｜URL
         with st.expander("预览导出数据"):
-            st.dataframe(df_download.head(10), use_container_width=True)
+            preview_df = pd.DataFrame()
+            preview_df["序号"] = [d["序号"] for d in all_citations_data]
+            preview_df["网站"] = [d["网站"] for d in all_citations_data]
+            preview_df["标题"] = [d["标题"] for d in all_citations_data]
+            preview_df["URL"] = [d["URL"] for d in all_citations_data]
+            st.dataframe(preview_df, use_container_width=True, hide_index=True)
         
-        # CSV下载
+        # CSV下载 - 完整表头
         csv = df_download.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
         st.download_button(
