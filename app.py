@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-最终版 - 简化界面，优化功能
+最终版 - 修正表格表头
 """
 
 import streamlit as st
@@ -338,46 +338,70 @@ if start_button and not st.session_state.processing:
 # 显示结果
 if st.session_state.results:
     st.markdown("---")
-    st.markdown("### 📊 提取结果")
     
-    # 准备扁平化的引用数据（每个引用一行）
+    # 为每个问题单独显示（保留原来的界面样式）
     all_citations_data = []
     
-    for result in st.session_state.results:
-        question = result['question']
-        share_link = result.get('share_link', '')
-        citations = result.get('citations', [])
-        
-        for c in citations:
-            all_citations_data.append({
-                "问题": question,
-                "网站": c.get("site", ""),
-                "标题": c.get("title", ""),
-                "URL": c.get("url", ""),
-                "摘要": c.get("snippet", ""),
-                "分享链接": share_link
-            })
+    for idx, result in enumerate(st.session_state.results):
+        with st.expander(f"📌 问题 {idx+1}: {result['question']}", expanded=True):
+            # 显示分享链接
+            share_link = result.get("share_link", "")
+            if share_link:
+                st.markdown(f"""
+                <div class="share-link">
+                    🔗 <strong>分享链接：</strong><a href="{share_link}" target="_blank">{share_link}</a>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # 显示引用来源表格
+            citations = result.get("citations", [])
+            if citations:
+                st.markdown(f"**📚 引用来源 ({len(citations)} 条)**")
+                
+                # 前端表格表头：序号｜网站｜标题｜URL
+                display_df = pd.DataFrame()
+                display_df["序号"] = [c.get("cite_index", i+1) for i, c in enumerate(citations)]
+                display_df["网站"] = [c.get("site", "") for c in citations]
+                display_df["标题"] = [c.get("title", "") for c in citations]
+                display_df["URL"] = [c.get("url", "") for c in citations]
+                
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "URL": st.column_config.LinkColumn("URL")
+                    }
+                )
+                
+                # 收集扁平化数据用于CSV下载（增加序号、分享链接列）
+                for i, c in enumerate(citations):
+                    all_citations_data.append({
+                        "序号": c.get("cite_index", i+1),
+                        "问题": result['question'],
+                        "网站": c.get("site", ""),
+                        "标题": c.get("title", ""),
+                        "URL": c.get("url", ""),
+                        "摘要": c.get("snippet", ""),
+                        "分享链接": share_link
+                    })
+            else:
+                st.info("📭 未找到引用来源")
     
-    # 显示结果表格
+    # 下载扁平化数据（包含序号和分享链接列）
     if all_citations_data:
-        st.markdown(f"**📚 共 {len(all_citations_data)} 条引用记录**")
-        
-        display_df = pd.DataFrame(all_citations_data)
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "URL": st.column_config.LinkColumn("URL"),
-                "分享链接": st.column_config.LinkColumn("分享链接")
-            }
-        )
-        
-        # 下载按钮
         st.markdown("---")
         st.markdown("### 📥 导出引用数据")
         
-        csv = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        df_download = pd.DataFrame(all_citations_data)
+        st.info(f"📊 共 {len(df_download)} 条引用记录")
+        
+        # 预览数据
+        with st.expander("预览导出数据"):
+            st.dataframe(df_download.head(10), use_container_width=True)
+        
+        # CSV下载 - 表头：序号｜问题｜网站｜标题｜URL｜摘要｜分享链接
+        csv = df_download.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
         st.download_button(
             "📥 下载引用数据 (CSV)",
