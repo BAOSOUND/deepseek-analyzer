@@ -1,6 +1,6 @@
 """
 DeepSeek 引用提取器
-精简版 - 只显示关键用户信息
+精简版 - 优化UI显示
 """
 
 import streamlit as st
@@ -11,6 +11,7 @@ import sys
 import os
 import base64
 import subprocess
+import shutil
 from pathlib import Path
 import json
 from io import StringIO
@@ -144,6 +145,41 @@ if 'logs' not in st.session_state:
     st.session_state.logs = []
 if 'reset_trigger' not in st.session_state:
     st.session_state.reset_trigger = 0
+if 'login_status' not in st.session_state:
+    st.session_state.login_status = False
+if 'log_expanded' not in st.session_state:
+    st.session_state.log_expanded = False
+
+# ===== 检查登录状态 =====
+def check_login_status():
+    """检查是否有持久化的登录数据"""
+    browser_data_dir = Path("cookies/browser_data")
+    if not browser_data_dir.exists():
+        return False
+    
+    # 检查是否有Local Storage数据
+    local_storage = browser_data_dir / "Local Storage" / "leveldb"
+    if local_storage.exists() and any(local_storage.iterdir()):
+        return True
+    
+    # 检查是否有Cookies文件
+    cookies_file = browser_data_dir / "Cookies"
+    if cookies_file.exists() and cookies_file.stat().st_size > 100:
+        return True
+    
+    return False
+
+# ===== 清除登录状态 =====
+def clear_login_status():
+    """清除保存的登录数据"""
+    browser_data_dir = Path("cookies/browser_data")
+    if browser_data_dir.exists():
+        shutil.rmtree(browser_data_dir)
+        st.session_state.login_status = False
+        st.rerun()
+
+# 更新登录状态
+st.session_state.login_status = check_login_status()
 
 # 侧边栏配置
 with st.sidebar:
@@ -159,6 +195,23 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # ===== 登录状态显示 =====
+    st.markdown("### 🔐 登录状态")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.session_state.login_status:
+            st.success("✅ 已登录")
+        else:
+            st.warning("⚠️ 未登录")
+    
+    with col2:
+        if st.session_state.login_status:
+            if st.button("🗑️ 清除", use_container_width=True):
+                clear_login_status()
+    
+    st.markdown("---")
+    
+    # ===== 配置选项 =====
     st.markdown("### ⚙️ 配置")
     
     show_browser = st.checkbox(
@@ -192,6 +245,7 @@ questions = [q.strip() for q in questions_text.split('\n') if q.strip()]
 # 控制按钮
 col1, col2, col3 = st.columns([1, 1, 5])
 with col1:
+    # 开始按钮：默认激活，只有processing时禁用
     start_button = st.button(
         "🚀 开始提取",
         type="primary",
@@ -200,6 +254,7 @@ with col1:
     )
 
 with col2:
+    # 重置按钮：默认激活，只有processing时禁用
     if st.button("🔄 重置", use_container_width=True, disabled=st.session_state.processing):
         st.session_state.results = []
         st.session_state.logs = []
@@ -211,9 +266,9 @@ with col2:
 progress_placeholder = st.empty()
 status_placeholder = st.empty()
 
-# 日志显示区域
-st.markdown("### 📋 运行日志")
-log_placeholder = st.empty()
+# ===== 日志显示区域 - 默认收起 =====
+with st.expander("📋 运行日志", expanded=st.session_state.log_expanded):
+    log_placeholder = st.empty()
 
 # ===== 精简版日志捕获类 =====
 class LogCapture:
@@ -260,6 +315,9 @@ async def run_analysis(questions, show_browser, delay):
     st.session_state.processing = True
     st.session_state.logs = []
     
+    # 自动展开日志区域
+    st.session_state.log_expanded = True
+    
     analyzer = DeepSeekAnalyzer(headless=not show_browser)
     
     # 重定向 stdout
@@ -269,26 +327,31 @@ async def run_analysis(questions, show_browser, delay):
     try:
         log_capture.write("开始批量处理任务")
         
-        status_placeholder.markdown(
-            '<div><span class="loading-spinner"></span><span class="status-text">启动模拟浏览器...</span></div>',
-            unsafe_allow_html=True
-        )
-        
-        await analyzer.start()
-        
+        # 更新顶部状态显示
         status_placeholder.markdown(
             '<div><span class="loading-spinner"></span><span class="status-text">正在检查登录状态...</span></div>',
             unsafe_allow_html=True
         )
+        
+        await analyzer.start()
         
         if not await analyzer.ensure_login():
             log_capture.write("❌ 登录失败")
             status_placeholder.error("❌ 登录失败")
             return
         
+        # 登录成功后更新侧边栏状态
+        st.session_state.login_status = True
+        
         for i, question in enumerate(questions):
             progress = (i + 1) / len(questions)
             progress_placeholder.progress(progress)
+            
+            # 更新顶部状态为处理中
+            status_placeholder.markdown(
+                f'<div><span class="loading-spinner"></span><span class="status-text">正在处理第 {i+1}/{len(questions)} 个问题...</span></div>',
+                unsafe_allow_html=True
+            )
             
             result = await analyzer.analyze_question(question)
             st.session_state.results.append(result)
@@ -298,6 +361,7 @@ async def run_analysis(questions, show_browser, delay):
         
         log_capture.write(f"✅ 全部完成！共处理 {len(questions)} 个问题")
         status_placeholder.success(f"✅ 完成！共处理 {len(questions)} 个问题")
+        progress_placeholder.empty()
         
     except Exception as e:
         log_capture.write(f"❌ 出错: {str(e)}")
